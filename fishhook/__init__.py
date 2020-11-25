@@ -171,7 +171,7 @@ def hook(cls, name=None, **kwargs):
 
     would set the implmentation of `int.__add__` to the `__add__` specified above
     Note that this function can also be used for non-function attributes,
-    however it is recommended to use `hook_cls` for batch hookes
+    however it is recommended to use `hook_cls` for batch hooks
     '''
     def pwrapper(attr=None, body=None):
         body = body or {}

@@ -27,3 +27,7 @@ class int_hook:
   def __add__(self, other):
     ...
 ```
+
+#### Links
+[Github](https://github.com/chilaxan/fishhook)
+[PyPi](https://pypi.org/project/fishhook/)
