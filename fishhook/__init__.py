@@ -2,12 +2,12 @@
 This module allows for swapping out the slot pointers contained in static
 classes with the `generic` slot pointers used by python for heap classes.
 This allows for assigning arbitrary python functions to static class dunders
-using `stitch` and `stitch_cls` and for applying new functionality to previously
-unused dunders. A stitched static dunder can be restored to original
-functionality using the `unstitch` function
+using `hook` and `hook_cls` and for applying new functionality to previously
+unused dunders. A hooked static dunder can be restored to original
+functionality using the `unhook` function
 '''
 
-__all__ = ['orig', 'stitch_cls', 'stitch', 'unstitch']
+__all__ = ['orig', 'hook_cls', 'hook', 'unhook']
 
 from ctypes import *
 import sys
@@ -15,7 +15,7 @@ import sys
 base_size = sizeof(c_ssize_t)
 wrapper_type = type(int.__add__)
 key_blacklist = vars(type('',(),{})).keys()
-stitches = set()
+hookes = set()
 
 _structs = (
     (type.__sizeof__(type) // base_size, 0),
@@ -58,9 +58,9 @@ methods_cache = {}
 
 def orig(self, *args, **kwargs):
     '''
-    Inspects the callers frame to deduce the original implmentation of a stitched function
+    Inspects the callers frame to deduce the original implmentation of a hooked function
     The original implmentation is then called with all passed arguments
-    Not intended to be used outside stitched functions
+    Not intended to be used outside hooked functions
     '''
     f = sys._getframe(1) # get callers frame
     cls = type(self)
@@ -109,25 +109,25 @@ def update_subcls(cls, pcls):
         if getattr(cls, name) is getattr(pcls, name):
             attributes[name] = getattr(pcls, name)
     if attributes:
-        stitch(cls, is_base=False)(body=attributes)
+        hook(cls, is_base=False)(body=attributes)
 
 
-def stitch_cls_from_cls(cls, pcls, is_base=True):
+def hook_cls_from_cls(cls, pcls, is_base=True):
     '''
-    stitches all dunders in `cls` to use the implmentations specified in `pcls`
+    hookes all dunders in `cls` to use the implmentations specified in `pcls`
     '''
     attribute_names = vars(pcls).keys() - key_blacklist
     attributes = {}
     for name in attribute_names:
-        stitch_id = f'{id(cls)}.{name}'
+        hook_id = f'{id(cls)}.{name}'
         attr = getattr(pcls, name)
         if callable(attr):
             orig_m = getattr(cls, name, None)
-            if orig_m and stitch_id not in methods_cache and is_base:
-                methods_cache[stitch_id] = orig_m
+            if orig_m and hook_id not in methods_cache and is_base:
+                methods_cache[hook_id] = orig_m
         attributes[name] = attr
         if is_base:
-            stitches.add(stitch_id)
+            hookes.add(hook_id)
         if name in slotmap:
             slotdata = slotmap[name]
             ocls_ptrs = getptrs(cls, slotdata)
@@ -140,38 +140,38 @@ def stitch_cls_from_cls(cls, pcls, is_base=True):
     for subcls in type(cls).__subclasses__(cls):
         update_subcls(subcls, pcls)
 
-def stitch_cls(cls, **kwargs):
+def hook_cls(cls, **kwargs):
     '''
-    Decorator, allows for the decoration of classes to stitch static classes
+    Decorator, allows for the decoration of classes to hook static classes
     ex:
 
-    @stitch_cls(int)
-    class int_stitch:
+    @hook_cls(int)
+    class int_hook:
         attr = ...
 
         def __add__(self, other):
             ...
 
-    would apply all of the attributes specified in `int_stitch` to `int`
+    would apply all of the attributes specified in `int_hook` to `int`
     '''
     def pwrapper(pcls):
-        stitch_cls_from_cls(cls, pcls, **kwargs)
+        hook_cls_from_cls(cls, pcls, **kwargs)
     return pwrapper
 
 class P:pass
 
-def stitch(cls, name=None, **kwargs):
+def hook(cls, name=None, **kwargs):
     '''
-    Decorator, allows for the decoration of functions to stitch a specified dunder on a static class
+    Decorator, allows for the decoration of functions to hook a specified dunder on a static class
     ex:
 
-    @stitch(int)
+    @hook(int)
     def __add__(self, other):
         ...
 
     would set the implmentation of `int.__add__` to the `__add__` specified above
     Note that this function can also be used for non-function attributes,
-    however it is recommended to use `stitch_cls` for batch stitches
+    however it is recommended to use `hook_cls` for batch hookes
     '''
     def pwrapper(attr=None, body=None):
         body = body or {}
@@ -181,17 +181,17 @@ def stitch(cls, name=None, **kwargs):
                 name = attr.__name__
             body[name] = attr
         if body:
-            stitch_cls_from_cls(cls, type(f'<{id(cls)}>', (P,), body), **kwargs)
+            hook_cls_from_cls(cls, type(f'<{id(cls)}>', (P,), body), **kwargs)
     return pwrapper
 
-def unstitch(cls, name):
+def unhook(cls, name):
     '''
     Removes new implmentation on static dunder
     Restores the original implmentation of a static dunder if it exists
     Will also delete non-dunders
     '''
-    stitch_id = f'{id(cls)}.{name}'
-    if stitch_id in stitches:
+    hook_id = f'{id(cls)}.{name}'
+    if hook_id in hookes:
         cls_dict = getdict(cls)
         del cls_dict[name]
         inherited_dict = {}
@@ -204,7 +204,7 @@ def unstitch(cls, name):
                 if orig_m not in inherited_dict.values():
                     cls_dict[name] = orig_m
                 break
-        stitches.remove(stitch_id)
+        hookes.remove(hook_id)
         pythonapi.PyType_Modified(py_object(cls))
     else:
-        raise RuntimeError(f'{cls.__name__}.{name} not stitched')
+        raise RuntimeError(f'{cls.__name__}.{name} not hooked')
