@@ -4,7 +4,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="stitch-chilaxan",
+    name="stitcher",
     version="0.0.1",
     author="chilaxan",
     author_email="chilaxan@gmail.com",
