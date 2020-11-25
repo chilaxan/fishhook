@@ -41,20 +41,20 @@ for _subcls in object.__subclasses__():
 for _offset, _name in _wrappers:
     _last = 0
     for _size, _location in _structs:
-        _msize = _last + _size * base_size
-        if _last <= _offset < _msize:
+        _end = _last + _size * base_size
+        if _last <= _offset < _end:
             _locs = slotmap.get(_name, [])
             _item = (
                 _size,
                 _location * base_size,
-                _size - (_msize - _offset) // base_size
+                _size - (_end - _offset) // base_size
             )
 
             if _item not in _locs:
                 _locs.append(_item)
 
             slotmap[_name] = _locs
-        _last = _msize
+        _last = _end
 
 methods_cache = {}
 
