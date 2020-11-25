@@ -15,7 +15,7 @@ import sys
 base_size = sizeof(c_ssize_t)
 wrapper_type = type(int.__add__)
 key_blacklist = vars(type('',(),{})).keys()
-hookes = set()
+hooks = set()
 
 _structs = (
     (type.__sizeof__(type) // base_size, 0),
@@ -114,7 +114,7 @@ def update_subcls(cls, pcls):
 
 def hook_cls_from_cls(cls, pcls, is_base=True):
     '''
-    hookes all dunders in `cls` to use the implmentations specified in `pcls`
+    hooks all dunders in `cls` to use the implmentations specified in `pcls`
     '''
     attribute_names = vars(pcls).keys() - key_blacklist
     attributes = {}
@@ -127,7 +127,7 @@ def hook_cls_from_cls(cls, pcls, is_base=True):
                 methods_cache[hook_id] = orig_m
         attributes[name] = attr
         if is_base:
-            hookes.add(hook_id)
+            hooks.add(hook_id)
         if name in slotmap:
             slotdata = slotmap[name]
             ocls_ptrs = getptrs(cls, slotdata)
@@ -191,7 +191,7 @@ def unhook(cls, name):
     Will also delete non-dunders
     '''
     hook_id = f'{id(cls)}.{name}'
-    if hook_id in hookes:
+    if hook_id in hooks:
         cls_dict = getdict(cls)
         del cls_dict[name]
         inherited_dict = {}
@@ -204,7 +204,7 @@ def unhook(cls, name):
                 if orig_m not in inherited_dict.values():
                     cls_dict[name] = orig_m
                 break
-        hookes.remove(hook_id)
+        hooks.remove(hook_id)
         pythonapi.PyType_Modified(py_object(cls))
     else:
         raise RuntimeError(f'{cls.__name__}.{name} not hooked')
