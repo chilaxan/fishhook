@@ -1,5 +1,6 @@
 
 dist/
 build/
+fishhook/__pycache__
 fishhook.egg-info/
 push.sh
