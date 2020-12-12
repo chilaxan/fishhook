@@ -67,7 +67,7 @@ def orig(self, *args, **kwargs):
     f = sys._getframe(1) # get callers frame
     cls = type(self)
     for key in dir(cls):
-        value = getattr(cls, key)
+        value = getattr(cls, key, None)
         if getattr(value, '__code__', None) == f.f_code:
             for mcls in cls.mro():
                 orig_m = methods_cache.get(f'{id(mcls)}.{key}', None)
@@ -123,6 +123,9 @@ def hook_cls_from_cls(cls, pcls, is_base=True):
     for name in attribute_names:
         hook_id = f'{id(cls)}.{name}'
         attr = getattr(pcls, name)
+        if name == '__class_getitem__': #special case (is already bound method, need to rebind)
+            mtype = type(attr)
+            attr = mtype(attr.__func__, cls)
         if callable(attr):
             orig_m = getattr(cls, name, None)
             if orig_m and hook_id not in methods_cache and is_base:
