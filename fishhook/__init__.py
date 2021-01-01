@@ -123,13 +123,13 @@ def hook_cls_from_cls(cls, pcls, is_base=True):
     for name in attribute_names:
         hook_id = f'{id(cls)}.{name}'
         attr = getattr(pcls, name)
-        if name == '__class_getitem__': #special case (is already bound method, need to rebind)
-            mtype = type(attr)
-            attr = mtype(attr.__func__, cls)
         if callable(attr):
             orig_m = getattr(cls, name, None)
             if orig_m and hook_id not in methods_cache and is_base:
                 methods_cache[hook_id] = orig_m
+        if name == '__class_getitem__': #special case (is already bound method, need to rebind)
+            mtype = type(attr)
+            attr = mtype(attr.__func__, cls)
         attributes[name] = attr
         if is_base:
             hooks.add(hook_id)
