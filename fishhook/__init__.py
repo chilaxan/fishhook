@@ -78,7 +78,7 @@ def orig(self, *args, **kwargs):
 def getdict(cls):
     '''
     Obtains a writeable dictionary of a classes namespace
-    Note that any modifications to this dictionary will need to be followed by a
+    Note that any modifications to this dictionary should be followed by a
     call to PyType_Modified(cls)
     '''
     cls_dict = cls.__dict__ # hold reference due to `cls.__dict__` being a getter
