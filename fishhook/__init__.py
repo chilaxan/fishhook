@@ -39,6 +39,7 @@ for _offset, _addr in sorted(_intermediate, key=lambda i:i[1]):
         _sizes.append((_addr - _last_addr)//base_size)
     _offsets.append(_offset)
     _last_addr = _addr
+_sizes.append((_end - _last_addr)//base_size)
 
 _structs = tuple(zip(_sizes, _offsets))
 
