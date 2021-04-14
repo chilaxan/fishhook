@@ -17,16 +17,33 @@ wrapper_type = type(int.__add__)
 key_blacklist = vars(type('',(),{})).keys()
 hooks = set()
 
-_structs = (
-    (type.__sizeof__(type) // base_size, 0),
-    (3, 10), # num of fields in tp_as_async
-    (36, 12), # num of fields in tp_as_number
-    (3, 14), # num of fields in tp_as_mapping
-    (10, 13) # num of fields in tp_as_sequence
-)
+static_size = type.__sizeof__(type) // base_size
 
-slotmap = {}
+def mem(addr, size):
+    return (c_char*size).from_address(addr)
+
+class _scratch:pass
+_size = type(_scratch).__sizeof__(_scratch)
+_start = id(_scratch)
+_end = _start + _size
+_cls_mem = mem(_start, _size).raw
+_intermediate = []
+for i in range(0, _size, base_size):
+    _val = int.from_bytes(_cls_mem[i:i + base_size], sys.byteorder)
+    if _start < _val < _end:
+        _intermediate.append((i//base_size, _val))
+_last_addr = None
+_offsets, _sizes = [0], [static_size]
+for _offset, _addr in sorted(_intermediate, key=lambda i:i[1]):
+    if _last_addr is not None:
+        _sizes.append((_addr - _last_addr)//base_size)
+    _offsets.append(_offset)
+    _last_addr = _addr
+
+_structs = tuple(zip(_sizes, _offsets))
+
 _wrappers = set()
+slotmap = {}
 
 for _subcls in object.__subclasses__():
     for _key, _val in vars(_subcls).items():
@@ -55,6 +72,7 @@ for _offset, _name in _wrappers:
 
             slotmap[_name] = _locs
         _last = _end
+
 
 methods_cache = {}
 
