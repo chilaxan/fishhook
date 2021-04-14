@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="fishhook",
-    version="0.0.8",
+    version="0.0.9",
     author="chilaxan",
     author_email="chilaxan@gmail.com",
     description="Allows for runtime hooking of static class functions",

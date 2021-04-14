@@ -13,67 +13,80 @@ from ctypes import *
 import sys
 
 base_size = sizeof(c_ssize_t)
-wrapper_type = type(int.__add__)
 key_blacklist = vars(type('',(),{})).keys()
 hooks = set()
 
-static_size = type.__sizeof__(type) // base_size
+def generate_slotmap(slotmap={}):
+    if slotmap:
+        return slotmap
+    static_size = type.__sizeof__(type) // base_size
 
-def mem(addr, size):
-    return (c_char*size).from_address(addr)
+    def mem(addr, size):
+        return (c_char*size).from_address(addr)
 
-class _scratch:pass
-_size = type(_scratch).__sizeof__(_scratch)
-_start = id(_scratch)
-_end = _start + _size
-_cls_mem = mem(_start, _size).raw
-_intermediate = []
-for i in range(0, _size, base_size):
-    _val = int.from_bytes(_cls_mem[i:i + base_size], sys.byteorder)
-    if _start < _val < _end:
-        _intermediate.append((i//base_size, _val))
-_last_addr = None
-_offsets, _sizes = [0], [static_size]
-for _offset, _addr in sorted(_intermediate, key=lambda i:i[1]):
-    if _last_addr is not None:
-        _sizes.append((_addr - _last_addr)//base_size)
-    _offsets.append(_offset)
-    _last_addr = _addr
-_sizes.append((_end - _last_addr)//base_size)
+    class _scratch:pass
+    _size = type(_scratch).__sizeof__(_scratch)
+    _start = id(_scratch)
+    _end = _start + _size
+    _cls_mem = mem(_start, _size)
+    _intermediate = []
+    for i in range(0, _size, base_size):
+        _val = int.from_bytes(_cls_mem.raw[i:i + base_size], sys.byteorder)
+        if _start < _val < _end:
+            _intermediate.append((i//base_size, _val))
+    _last_addr = None
+    _offsets, _sizes = [0], [static_size]
+    for _offset, _addr in sorted(_intermediate, key=lambda i:i[1]):
+        if _last_addr is not None:
+            _sizes.append((_addr - _last_addr)//base_size)
+        _offsets.append(_offset)
+        _last_addr = _addr
+    _sizes.append((_end - _last_addr)//base_size)
 
-_structs = tuple(zip(_sizes, _offsets))
+    _structs = tuple(zip(_sizes, _offsets))
 
-_wrappers = set()
-slotmap = {}
+    _seen = set()
+    _wrappers = set()
 
-for _subcls in object.__subclasses__():
-    for _key, _val in vars(_subcls).items():
-        if isinstance(_val, wrapper_type):
-            _wrapperbase = c_void_p.from_address(id(_val) + (5 * base_size))
-            _offset = c_int.from_address(_wrapperbase.value + base_size)
-            _wrappers.add((
-                _offset.value,
-                _val.__name__
-            ))
+    for _subcls in object.__subclasses__():
+        for _name, _method in vars(_subcls).items():
+            if not _name.startswith('__') or not callable(_method) or _name in _seen:
+                continue
+            _seen.add(_name)
+            _oldmem = _cls_mem.raw
+            try:
+                setattr(_scratch, _name, None)
+            except (TypeError, AttributeError) as e:
+                continue
+            if _oldmem[base_size:] != _cls_mem.raw[base_size:]:
+                for i in range(0, len(_oldmem), base_size):
+                    ovalue = int.from_bytes(_oldmem[i:i + base_size], sys.byteorder)
+                    nvalue = int.from_bytes(_cls_mem.raw[i:i + base_size], sys.byteorder)
+                    if ovalue != nvalue and i != 0:
+                        _wrappers.add((
+                            i,
+                            _name
+                        ))
+                delattr(_scratch, _name)
 
-for _offset, _name in _wrappers:
-    _last = 0
-    for _size, _location in _structs:
-        _end = _last + _size * base_size
-        if _last <= _offset < _end:
-            _locs = slotmap.get(_name, [])
-            _item = (
-                _size,
-                _location * base_size,
-                _size - (_end - _offset) // base_size
-            )
+    for _offset, _name in _wrappers:
+        _last = 0
+        for _size, _location in _structs:
+            _end = _last + _size * base_size
+            if _last <= _offset < _end:
+                _locs = slotmap.get(_name, ())
+                _item = (
+                    _size,
+                    _location * base_size,
+                    _size - (_end - _offset) // base_size
+                )
 
-            if _item not in _locs:
-                _locs.append(_item)
+                if _item not in _locs:
+                    _locs += (_item,)
 
-            slotmap[_name] = _locs
-        _last = _end
-
+                slotmap[_name] = _locs
+            _last = _end
+    return slotmap
 
 methods_cache = {}
 
@@ -152,8 +165,8 @@ def hook_cls_from_cls(cls, pcls, is_base=True):
         attributes[name] = attr
         if is_base:
             hooks.add(hook_id)
-        if name in slotmap:
-            slotdata = slotmap[name]
+        slotdata = generate_slotmap().get(name)
+        if slotdata:
             ocls_ptrs = getptrs(cls, slotdata)
             pcls_ptrs = getptrs(pcls, slotdata)
             for optr, pptr in zip(ocls_ptrs, pcls_ptrs):
