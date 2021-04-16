@@ -24,68 +24,70 @@ def generate_slotmap(slotmap={}):
     def mem(addr, size):
         return (c_char*size).from_address(addr)
 
-    class _scratch:pass
-    _size = type(_scratch).__sizeof__(_scratch)
-    _start = id(_scratch)
-    _end = _start + _size
-    _cls_mem = mem(_start, _size)
-    _intermediate = []
-    for i in range(0, _size, base_size):
-        _val = int.from_bytes(_cls_mem.raw[i:i + base_size], sys.byteorder)
-        if _start < _val < _end:
-            _intermediate.append((i//base_size, _val))
-    _last_addr = None
-    _offsets, _sizes = [0], [static_size]
-    for _offset, _addr in sorted(_intermediate, key=lambda i:i[1]):
-        if _last_addr is not None:
-            _sizes.append((_addr - _last_addr)//base_size)
-        _offsets.append(_offset)
-        _last_addr = _addr
-    _sizes.append((_end - _last_addr)//base_size)
+    class scratch:
+        __slots__ = ()
+    size = type(scratch).__sizeof__(scratch)
+    start = id(scratch)
+    end = start + size
+    cls_mem = mem(start, size)
+    intermediate = []
+    for i in range(0, size, base_size):
+        val = int.from_bytes(cls_mem.raw[i:i + base_size], sys.byteorder)
+        if start < val < end:
+            intermediate.append((i//base_size, val))
+    last_addr = None
+    offsets, sizes = [0], [static_size]
+    for offset, addr in sorted(intermediate, key=lambda i:i[1]):
+        if last_addr is not None:
+            sizes.append((addr - last_addr)//base_size)
+        offsets.append(offset)
+        last_addr = addr
+    sizes.append((end - last_addr)//base_size)
 
-    _structs = tuple(zip(_sizes, _offsets))
+    structs = tuple(zip(sizes, offsets))
+    print(structs)
 
-    _seen = set()
-    _wrappers = set()
+    seen = set()
+    wrappers = set()
 
-    for _subcls in object.__subclasses__():
-        for _name, _method in vars(_subcls).items():
-            if not _name.startswith('__') or not callable(_method) or _name in _seen:
+    for subcls in object.__subclasses__():
+        for name, method in vars(subcls).items():
+            if not name.startswith('__') or not callable(method) or name in seen:
                 continue
-            _seen.add(_name)
-            _oldmem = _cls_mem.raw
+            seen.add(name)
+            oldmem = cls_mem.raw
             try:
-                setattr(_scratch, _name, None)
+                setattr(scratch, name, None)
             except (TypeError, AttributeError) as e:
                 continue
-            if _oldmem[base_size:] != _cls_mem.raw[base_size:]:
-                for i in range(0, len(_oldmem), base_size):
-                    ovalue = int.from_bytes(_oldmem[i:i + base_size], sys.byteorder)
-                    nvalue = int.from_bytes(_cls_mem.raw[i:i + base_size], sys.byteorder)
+            if oldmem[base_size:] != cls_mem.raw[base_size:]:
+                for i in range(0, len(oldmem), base_size):
+                    ovalue = int.from_bytes(oldmem[i:i + base_size], sys.byteorder)
+                    nvalue = int.from_bytes(cls_mem.raw[i:i + base_size], sys.byteorder)
                     if ovalue != nvalue and i != 0:
-                        _wrappers.add((
+                        wrappers.add((
                             i,
-                            _name
+                            name
                         ))
-                delattr(_scratch, _name)
+                delattr(scratch, name)
 
-    for _offset, _name in _wrappers:
-        _last = 0
-        for _size, _location in _structs:
-            _end = _last + _size * base_size
-            if _last <= _offset < _end:
-                _locs = slotmap.get(_name, ())
-                _item = (
-                    _size,
-                    _location * base_size,
-                    _size - (_end - _offset) // base_size
+    for offset, name in wrappers:
+        last = 0
+        for size, location in structs:
+            end = last + size * base_size
+            if last <= offset < end:
+                locs = slotmap.get(name, ())
+                item = (
+                    size,
+                    location * base_size,
+                    size - (end - offset) // base_size
                 )
 
-                if _item not in _locs:
-                    _locs += (_item,)
+                if item not in locs:
+                    locs += (item,)
 
-                slotmap[_name] = _locs
-            _last = _end
+                slotmap[name] = locs
+            last = end
     return slotmap
 
 methods_cache = {}
