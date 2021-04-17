@@ -45,7 +45,6 @@ def generate_slotmap(slotmap={}):
     sizes.append((end - last_addr)//base_size)
 
     structs = tuple(zip(sizes, offsets))
-    print(structs)
 
     seen = set()
     wrappers = set()
