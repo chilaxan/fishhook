@@ -1,4 +1,5 @@
 '''
+(credits to <@!274715613115711488> (chilaxan) for the original fishhook module, author of this fork would like to give all credits to chilaxan)
 This module allows for swapping out the slot pointers contained in static
 classes with the `generic` slot pointers used by python for heap classes.
 This allows for assigning arbitrary python functions to static class dunders
@@ -12,8 +13,10 @@ __all__ = ['orig', 'hook_cls', 'hook', 'unhook']
 from ctypes import *
 import sys
 
+int_frombytes = int.from_bytes
+
 base_size = sizeof(c_ssize_t)
-key_blacklist = vars(type('',(),{})).keys()
+key_blacklist = {'__weakref__', '__module__'}
 hooks = set()
 
 def generate_slotmap(slotmap={}):
@@ -32,7 +35,7 @@ def generate_slotmap(slotmap={}):
     cls_mem = mem(start, size)
     intermediate = []
     for i in range(0, size, base_size):
-        val = int.from_bytes(cls_mem.raw[i:i + base_size], sys.byteorder)
+        val = int_frombytes(cls_mem.raw[i:i + base_size], sys.byteorder)
         if start < val < end:
             intermediate.append((i//base_size, val))
     last_addr = None
@@ -51,7 +54,7 @@ def generate_slotmap(slotmap={}):
 
     for subcls in object.__subclasses__():
         for name, method in vars(subcls).items():
-            if not name.startswith('__') or not callable(method) or name in seen:
+            if not name.startswith('__') or name in seen:
                 continue
             seen.add(name)
             oldmem = cls_mem.raw
@@ -61,8 +64,8 @@ def generate_slotmap(slotmap={}):
                 continue
             if oldmem[base_size:] != cls_mem.raw[base_size:]:
                 for i in range(0, len(oldmem), base_size):
-                    ovalue = int.from_bytes(oldmem[i:i + base_size], sys.byteorder)
-                    nvalue = int.from_bytes(cls_mem.raw[i:i + base_size], sys.byteorder)
+                    ovalue = int_frombytes(oldmem[i:i + base_size], sys.byteorder)
+                    nvalue = int_frombytes(cls_mem.raw[i:i + base_size], sys.byteorder)
                     if ovalue != nvalue and i != 0:
                         wrappers.add((
                             i,
@@ -87,9 +90,15 @@ def generate_slotmap(slotmap={}):
 
                 slotmap[name] = locs
             last = end
+    slotmap["__doc__"] = ((8, 0, 22),) # This
+    slotmap["__dict__"] = ((8, 0, 33),) # is
+    slotmap["__name__"] = ((8, 0, 3),) # The Ultimate Showdown
+    slotmap["__basicsize__"] = ((8, 0, 4),) # of
+    slotmap["__itemsize__"] = ((8, 0, 5),) # Ultimate Destiny
     return slotmap
 
 methods_cache = {}
+attr_cache = {}
 
 def orig(self, *args, **kwargs):
     '''
@@ -98,6 +107,7 @@ def orig(self, *args, **kwargs):
     Not intended to be used outside hooked functions
     '''
     f = sys._getframe(1) # get callers frame
+    name = args[0]
     cls = type(self)
     for key in dir(cls):
         value = getattr(cls, key, None)
@@ -106,6 +116,11 @@ def orig(self, *args, **kwargs):
                 orig_m = methods_cache.get(f'{id(mcls)}.{key}', None)
                 if orig_m:
                     return orig_m(self, *args, **kwargs)
+        elif hasattr(value, '__code__') is False and key == name:
+            for scls in cls.mro():
+                orig_a = attr_cache.get(f'{id(scls)}.{key}', None)
+                if orig_a:
+                    return orig_a
     raise RuntimeError('no original method found')
 
 def getdict(cls):
@@ -119,7 +134,7 @@ def getdict(cls):
         return cls_dict
     return py_object.from_address(id(cls_dict) + 2 * base_size).value
 
-def getptrs(cls, slotdata):
+def getptrs(cls, slotdata, name=None, setting=False):
     '''
     Yields pointers to all slots on `cls` that are referenced by `slotdata`
     Will instantialize any non-existant structs
@@ -146,6 +161,11 @@ def update_subcls(cls, pcls):
     if attributes:
         hook(cls, is_base=False)(body=attributes)
 
+modifyables = {'__name__', '__doc__'}
+class CP:
+    __slots__ = 'value'
+    def __init__(self, x):
+        self.value = x
 
 def hook_cls_from_cls(cls, pcls, is_base=True):
     '''
@@ -160,18 +180,33 @@ def hook_cls_from_cls(cls, pcls, is_base=True):
             orig_m = getattr(cls, name, None)
             if orig_m and hook_id not in methods_cache and is_base:
                 methods_cache[hook_id] = orig_m
+        else:
+            orig_a = getattr(cls, name, None)
+            if orig_a and hook_id not in attr_cache and is_base:
+                attr_cache[hook_id] = orig_a
         if name == '__class_getitem__': #special case (is already bound method, need to rebind)
             mtype = type(attr)
             attr = mtype(attr.__func__, cls)
         attributes[name] = attr
         if is_base:
             hooks.add(hook_id)
-        slotdata = generate_slotmap().get(name)
-        if slotdata:
-            ocls_ptrs = getptrs(cls, slotdata)
-            pcls_ptrs = getptrs(pcls, slotdata)
-            for optr, pptr in zip(ocls_ptrs, pcls_ptrs):
-                optr.value = pptr.value
+        if name == '__doc__' and attr:
+            c_char_p.from_address(id(cls) + 176).value = c_void_p.from_address(id(pcls) + 176).value
+        elif name == '__dict__':
+            py_object.from_address(id(cls) + 264).value = pcls.__dict__['__dict__']
+        elif name == '__name__':
+            c_char_p.from_address(id(cls) + 24).value = pcls.__dict__['__name__'].encode()
+        elif name == '__basicsize__':
+            c_ssize_t.from_address(id(cls) + 32).value = pcls.__dict__['__basicsize__']
+        elif name == '__itemsize__':
+            c_ssize_t.from_address(id(cls) + 40).value = pcls.__dict__['__itemsize__']
+        else:
+            slotdata = generate_slotmap().get(name)
+            if slotdata:
+                ocls_ptrs = getptrs(cls, slotdata)
+                pcls_ptrs = getptrs(pcls, slotdata)
+                for optr, pptr in zip(ocls_ptrs, pcls_ptrs):
+                    optr.value = pptr.value
     if is_base:
         getdict(cls).update(attributes)
     pythonapi.PyType_Modified(py_object(cls))
@@ -182,14 +217,11 @@ def hook_cls(cls, **kwargs):
     '''
     Decorator, allows for the decoration of classes to hook static classes
     ex:
-
     @hook_cls(int)
     class int_hook:
         attr = ...
-
         def __add__(self, other):
             ...
-
     would apply all of the attributes specified in `int_hook` to `int`
     '''
     def pwrapper(pcls):
@@ -202,11 +234,9 @@ def hook(cls, name=None, **kwargs):
     '''
     Decorator, allows for the decoration of functions to hook a specified dunder on a static class
     ex:
-
     @hook(int)
     def __add__(self, other):
         ...
-
     would set the implmentation of `int.__add__` to the `__add__` specified above
     Note that this function can also be used for non-function attributes,
     however it is recommended to use `hook_cls` for batch hooks
@@ -242,7 +272,31 @@ def unhook(cls, name):
                 if orig_m not in inherited_dict.values():
                     cls_dict[name] = orig_m
                 break
+            else:
+                orig_a = attr_cache.pop(f'{id(mcls)}.{name}', None)
+                if orig_a:
+                    if name == '__dict__':
+                        cls_dict.clear()
+                        cls_dict.update(orig_a)
+                    elif name == '__doc__':
+                        class A:
+                           __doc__ = orig_a
+                        c_char_p.from_address(id(cls) + 176).value = c_void_p.from_address(id(A) + 176).value
+                    elif name == '__name__':
+                        c_char_p.from_address(id(cls) + 24).value = orig_a.encode()
+                    elif name == '__basicsize__':
+                        c_char_p.from_address(id(cls) + 32).value = orig_a
+                    elif name == '__itemsize__':
+                        c_char_p.from_address(id(cls) + 40).value = orig_a
+                    cls_dict[name] = orig_a
+                    
         hooks.remove(hook_id)
         pythonapi.PyType_Modified(py_object(cls))
     else:
         raise RuntimeError(f'{cls.__name__}.{name} not hooked')
+
+'''
+Here's a comment:
+Since the orig_a and orig_m do the same thing to methods and
+non-methods (respectively), shouldn't they be combined?
+'''
