@@ -1,5 +1,4 @@
 '''
-(credits to <@!274715613115711488> (chilaxan) for the original fishhook module, author of this fork would like to give all credits to chilaxan)
 This module allows for swapping out the slot pointers contained in static
 classes with the `generic` slot pointers used by python for heap classes.
 This allows for assigning arbitrary python functions to static class dunders
@@ -134,7 +133,7 @@ def getdict(cls):
         return cls_dict
     return py_object.from_address(id(cls_dict) + 2 * base_size).value
 
-def getptrs(cls, slotdata, name=None, setting=False):
+def getptrs(cls, slotdata):
     '''
     Yields pointers to all slots on `cls` that are referenced by `slotdata`
     Will instantialize any non-existant structs
