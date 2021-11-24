@@ -216,11 +216,14 @@ def hook_cls(cls, **kwargs):
     '''
     Decorator, allows for the decoration of classes to hook static classes
     ex:
+
     @hook_cls(int)
     class int_hook:
         attr = ...
+
         def __add__(self, other):
             ...
+
     would apply all of the attributes specified in `int_hook` to `int`
     '''
     def pwrapper(pcls):
@@ -233,9 +236,11 @@ def hook(cls, name=None, **kwargs):
     '''
     Decorator, allows for the decoration of functions to hook a specified dunder on a static class
     ex:
+
     @hook(int)
     def __add__(self, other):
         ...
+
     would set the implmentation of `int.__add__` to the `__add__` specified above
     Note that this function can also be used for non-function attributes,
     however it is recommended to use `hook_cls` for batch hooks
