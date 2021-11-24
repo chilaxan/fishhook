@@ -89,11 +89,11 @@ def generate_slotmap(slotmap={}):
 
                 slotmap[name] = locs
             last = end
-    slotmap["__doc__"] = ((8, 0, 22),) # This
-    slotmap["__dict__"] = ((8, 0, 33),) # is
-    slotmap["__name__"] = ((8, 0, 3),) # The Ultimate Showdown
-    slotmap["__basicsize__"] = ((8, 0, 4),) # of
-    slotmap["__itemsize__"] = ((8, 0, 5),) # Ultimate Destiny
+    slotmap["__doc__"] = ((base_size, 0, 22),)
+    slotmap["__dict__"] = ((base_size, 0, 33),)
+    slotmap["__name__"] = ((base_size, 0, 3),)
+    slotmap["__basicsize__"] = ((base_size, 0, 4),)
+    slotmap["__itemsize__"] = ((base_size, 0, 5),)
     return slotmap
 
 methods_cache = {}
@@ -190,15 +190,15 @@ def hook_cls_from_cls(cls, pcls, is_base=True):
         if is_base:
             hooks.add(hook_id)
         if name == '__doc__' and attr:
-            c_char_p.from_address(id(cls) + 176).value = c_void_p.from_address(id(pcls) + 176).value
+            c_char_p.from_address(id(cls) + 22 * base_size).value = c_void_p.from_address(id(pcls) + 22 * base_size).value
         elif name == '__dict__':
-            py_object.from_address(id(cls) + 264).value = pcls.__dict__['__dict__']
+            py_object.from_address(id(cls) + 33 * base_size).value = pcls.__dict__['__dict__']
         elif name == '__name__':
-            c_char_p.from_address(id(cls) + 24).value = pcls.__dict__['__name__'].encode()
+            c_char_p.from_address(id(cls) + base_size * 3).value = pcls.__dict__['__name__'].encode()
         elif name == '__basicsize__':
-            c_ssize_t.from_address(id(cls) + 32).value = pcls.__dict__['__basicsize__']
+            c_ssize_t.from_address(id(cls) + base_size * 4).value = pcls.__dict__['__basicsize__']
         elif name == '__itemsize__':
-            c_ssize_t.from_address(id(cls) + 40).value = pcls.__dict__['__itemsize__']
+            c_ssize_t.from_address(id(cls) + base_size * 5).value = pcls.__dict__['__itemsize__']
         else:
             slotdata = generate_slotmap().get(name)
             if slotdata:
@@ -285,13 +285,13 @@ def unhook(cls, name):
                     elif name == '__doc__':
                         class A:
                            __doc__ = orig_a
-                        c_char_p.from_address(id(cls) + 176).value = c_void_p.from_address(id(A) + 176).value
+                        c_char_p.from_address(id(cls) + base_size * 22).value = c_void_p.from_address(id(A) + base_size * 22).value
                     elif name == '__name__':
-                        c_char_p.from_address(id(cls) + 24).value = orig_a.encode()
+                        c_char_p.from_address(id(cls) + base_size * 3).value = orig_a.encode()
                     elif name == '__basicsize__':
-                        c_char_p.from_address(id(cls) + 32).value = orig_a
+                        c_char_p.from_address(id(cls) + base_size * 4).value = orig_a
                     elif name == '__itemsize__':
-                        c_char_p.from_address(id(cls) + 40).value = orig_a
+                        c_char_p.from_address(id(cls) + base_size * 5).value = orig_a
                     cls_dict[name] = orig_a
                     
         hooks.remove(hook_id)
