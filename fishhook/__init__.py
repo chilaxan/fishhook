@@ -15,8 +15,16 @@ import sys
 int_frombytes = int.from_bytes
 
 base_size = sizeof(c_ssize_t)
+py_object_size = sizeof(py_object)
+py_varobject_size = py_object_size + base_size
 key_blacklist = {'__weakref__', '__module__'}
 hooks = set()
+
+__name___addr = py_varobject_size
+__basicsize___addr = py_varobject_size + base_size
+__itemsize___addr = __basicsize___addr + base_size
+__doc___addr = py_varobject_size + base_size * 19
+__dict___addr = py_varobject_size + base_size * 30
 
 def generate_slotmap(slotmap={}):
     if slotmap:
@@ -89,11 +97,11 @@ def generate_slotmap(slotmap={}):
 
                 slotmap[name] = locs
             last = end
-    slotmap["__doc__"] = ((base_size, 0, 22),)
-    slotmap["__dict__"] = ((base_size, 0, 33),)
-    slotmap["__name__"] = ((base_size, 0, 3),)
-    slotmap["__basicsize__"] = ((base_size, 0, 4),)
-    slotmap["__itemsize__"] = ((base_size, 0, 5),)
+    slotmap["__doc__"] = ((base_size, 0, __doc___addr // base_size),)
+    slotmap["__dict__"] = ((base_size, 0, __dict___addr // base_size),)
+    slotmap["__name__"] = ((base_size, 0, __name___addr // base_size),)
+    slotmap["__basicsize__"] = ((base_size, 0, __basicsize___addr // base_size),)
+    slotmap["__itemsize__"] = ((base_size, 0, __itemsize___addr // base_size),)
     return slotmap
 
 methods_cache = {}
@@ -190,15 +198,15 @@ def hook_cls_from_cls(cls, pcls, is_base=True):
         if is_base:
             hooks.add(hook_id)
         if name == '__doc__' and attr:
-            c_char_p.from_address(id(cls) + 22 * base_size).value = c_void_p.from_address(id(pcls) + 22 * base_size).value
+            c_char_p.from_address(id(cls) + __doc___addr).value = c_void_p.from_address(id(pcls) + __doc___addr).value
         elif name == '__dict__':
-            py_object.from_address(id(cls) + 33 * base_size).value = pcls.__dict__['__dict__']
+            py_object.from_address(id(cls) + __dict___addr).value = pcls.__dict__['__dict__']
         elif name == '__name__':
-            c_char_p.from_address(id(cls) + base_size * 3).value = pcls.__dict__['__name__'].encode()
+            c_char_p.from_address(id(cls) + __name___addr).value = pcls.__dict__['__name__'].encode()
         elif name == '__basicsize__':
-            c_ssize_t.from_address(id(cls) + base_size * 4).value = pcls.__dict__['__basicsize__']
+            c_ssize_t.from_address(id(cls) + __basicsize___addr).value = pcls.__dict__['__basicsize__']
         elif name == '__itemsize__':
-            c_ssize_t.from_address(id(cls) + base_size * 5).value = pcls.__dict__['__itemsize__']
+            c_ssize_t.from_address(id(cls) + __itemsize___addr).value = pcls.__dict__['__itemsize__']
         else:
             slotdata = generate_slotmap().get(name)
             if slotdata:
@@ -285,13 +293,13 @@ def unhook(cls, name):
                     elif name == '__doc__':
                         class A:
                            __doc__ = orig_a
-                        c_char_p.from_address(id(cls) + base_size * 22).value = c_void_p.from_address(id(A) + base_size * 22).value
+                        c_char_p.from_address(id(cls) + __doc___addr).value = c_void_p.from_address(id(A) + __doc___addr).value
                     elif name == '__name__':
-                        c_char_p.from_address(id(cls) + base_size * 3).value = orig_a.encode()
+                        c_char_p.from_address(id(cls) + __name___addr).value = orig_a.encode()
                     elif name == '__basicsize__':
-                        c_char_p.from_address(id(cls) + base_size * 4).value = orig_a
+                        c_char_p.from_address(id(cls) + __basicsize___addr).value = orig_a
                     elif name == '__itemsize__':
-                        c_char_p.from_address(id(cls) + base_size * 5).value = orig_a
+                        c_char_p.from_address(id(cls) + __itemsize___addr).value = orig_a
                     cls_dict[name] = orig_a
                     
         hooks.remove(hook_id)
