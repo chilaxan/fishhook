@@ -16,6 +16,13 @@ base_size = sizeof(c_ssize_t)
 key_blacklist = vars(type('',(),{})).keys()
 hooks = set()
 
+def itos(n):
+    def _itos(n):
+        while n:
+            yield chr(n % 10 + 48)
+            n //= 10
+    return ''.join(reversed(list(_itos(n))))
+
 def generate_slotmap(slotmap={}):
     if slotmap:
         return slotmap
@@ -103,7 +110,7 @@ def orig(self, *args, **kwargs):
         value = getattr(cls, key, None)
         if getattr(value, '__code__', None) == f.f_code:
             for mcls in cls.mro():
-                orig_m = methods_cache.get(f'{id(mcls)}.{key}', None)
+                orig_m = methods_cache.get(f'{itos(id(mcls))}.{key}', None)
                 if orig_m:
                     return orig_m(self, *args, **kwargs)
     raise RuntimeError('no original method found')
@@ -219,7 +226,7 @@ def hook(cls, name=None, **kwargs):
                 name = attr.__name__
             body[name] = attr
         if body:
-            hook_cls_from_cls(cls, type(f'<{id(cls)}>', (P,), body), **kwargs)
+            hook_cls_from_cls(cls, type(f'<{itos(id(cls))}>', (P,), body), **kwargs)
     return pwrapper
 
 def unhook(cls, name):
@@ -237,7 +244,7 @@ def unhook(cls, name):
             if mcls != cls:
                 inherited_dict.update(vars(mcls))
         for mcls in cls.mro():
-            orig_m = methods_cache.pop(f'{id(mcls)}.{name}', None)
+            orig_m = methods_cache.pop(f'{itos(id(mcls))}.{name}', None)
             if orig_m:
                 if orig_m not in inherited_dict.values():
                     cls_dict[name] = orig_m
