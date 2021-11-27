@@ -1,4 +1,5 @@
 
+.eggs/
 dist/
 build/
 fishhook/__pycache__
