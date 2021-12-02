@@ -161,7 +161,7 @@ def hook_cls_from_cls(cls, pcls, is_base=True):
     attribute_names = vars(pcls).keys() - key_blacklist
     attributes = {}
     for name in attribute_names:
-        hook_id = f'{id(cls)}.{name}'
+        hook_id = f'{itos(id(cls))}.{name}'
         attr = getattr(pcls, name)
         if callable(attr):
             orig_m = getattr(cls, name, None)
@@ -235,7 +235,7 @@ def unhook(cls, name):
     Restores the original implmentation of a static dunder if it exists
     Will also delete non-dunders
     '''
-    hook_id = f'{id(cls)}.{name}'
+    hook_id = f'{itos(id(cls))}.{name}'
     if hook_id in hooks:
         cls_dict = getdict(cls)
         del cls_dict[name]
