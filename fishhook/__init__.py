@@ -96,25 +96,6 @@ def generate_slotmap(slotmap={}):
             last = end
     return slotmap
 
-methods_cache = {}
-
-def orig(self, *args, **kwargs):
-    '''
-    Inspects the callers frame to deduce the original implmentation of a hooked function
-    The original implmentation is then called with all passed arguments
-    Not intended to be used outside hooked functions
-    '''
-    f = sys._getframe(1) # get callers frame
-    cls = type(self)
-    for key in dir(cls):
-        value = getattr(cls, key, None)
-        if getattr(value, '__code__', None) == f.f_code:
-            for mcls in cls.mro():
-                orig_m = methods_cache.get(f'{itos(id(mcls))}.{key}', None)
-                if orig_m:
-                    return orig_m(self, *args, **kwargs)
-    raise RuntimeError('no original method found')
-
 def getdict(cls):
     '''
     Obtains a writeable dictionary of a classes namespace
@@ -125,6 +106,35 @@ def getdict(cls):
     if isinstance(cls_dict, dict):
         return cls_dict
     return py_object.from_address(id(cls_dict) + 2 * base_size).value
+
+def custom_dir(cls):
+    '''
+    Works the same as dir() but will also work if `dict.__getitem__` is
+    overridden, instead of causing a RecursionError
+    '''
+    dictionary = {}
+    for mcls in cls.mro()[::-1]:
+        dictionary |= getdict(mcls)
+    return dictionary.keys()
+
+methods_cache = {}
+
+def orig(self, *args, **kwargs):
+    '''
+    Inspects the callers frame to deduce the original implmentation of a hooked function
+    The original implmentation is then called with all passed arguments
+    Not intended to be used outside hooked functions
+    '''
+    f = sys._getframe(1) # get callers frame
+    cls = type(self)
+    for key in custom_dir(cls):
+        value = getattr(cls, key, None)
+        if getattr(value, '__code__', None) == f.f_code:
+            for mcls in cls.mro():
+                orig_m = methods_cache.get(f'{itos(id(mcls))}.{key}', None)
+                if orig_m:
+                    return orig_m(self, *args, **kwargs)
+    raise RuntimeError('no original method found')
 
 def getptrs(cls, slotdata):
     '''
