@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="fishhook",
-    version="0.1.4",
+    version="0.2",
     author="chilaxan",
     author_email="chilaxan@gmail.com",
     description="Allows for runtime hooking of static class functions",
@@ -18,5 +18,5 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.8',
 )

@@ -9,183 +9,270 @@ functionality using the `unhook` function
 
 __all__ = ['orig', 'hook_cls', 'hook', 'unhook']
 
-from ctypes import *
+from ctypes import c_char, pythonapi, py_object
 import sys
 
-base_size = sizeof(c_ssize_t)
-key_blacklist = vars(type('',(),{})).keys()
-hooks = set()
+BYTES_HEADER = bytes.__basicsize__ - 1
 
-def itos(n):
-    def _itos(n):
-        while n:
-            yield chr(n % 10 + 48)
-            n //= 10
-    return ''.join(reversed(list(_itos(n))))
+Py_TPFLAGS_IMMUTABLE = 1 << 8
+Py_TPFLAGS_HEAPTYPE = 1 << 9
+Py_TPFLAGS_READY = 1 << 12
 
-def generate_slotmap(slotmap={}):
-    if slotmap:
-        return slotmap
-    static_size = type.__sizeof__(type) // base_size
+def sizeof(obj):
+    return type(obj).__sizeof__(obj)
 
-    def mem(addr, size):
-        return (c_char*size).from_address(addr)
+TYPE_BASICSIZE = sizeof(type)
 
-    class scratch:
-        __slots__ = ()
-    size = type(scratch).__sizeof__(scratch)
-    start = id(scratch)
-    end = start + size
-    cls_mem = mem(start, size)
-    intermediate = []
-    for i in range(0, size, base_size):
-        val = int.from_bytes(cls_mem.raw[i:i + base_size], sys.byteorder)
-        if start < val < end:
-            intermediate.append((i//base_size, val))
-    last_addr = None
-    offsets, sizes = [0], [static_size]
-    for offset, addr in sorted(intermediate, key=lambda i:i[1]):
-        if last_addr is not None:
-            sizes.append((addr - last_addr)//base_size)
-        offsets.append(offset)
-        last_addr = addr
-    sizes.append((end - last_addr)//base_size)
+def getmem(obj_or_addr, size=None, fmt='P'):
+    if size is None:
+        if isinstance(obj_or_addr, type):
+            # type(cls).__sizeof__(cls) calls a function with a heaptype member
+            # if cls is currently unlocked and member happens to overlap with other data
+            # crash occurs
+            # we avoid this by hardcoding TYPE_BASICSIZE
+            size = TYPE_BASICSIZE
+        else:
+            size = sizeof(obj_or_addr)
+        addr = id(obj_or_addr)
+    else:
+        addr = obj_or_addr
+    return memoryview((c_char*size).from_address(addr)).cast('c').cast(fmt)
 
-    structs = tuple(zip(sizes, offsets))
+def alloc(size, _storage=[]):
+    _storage.append(bytes(size))
+    return id(_storage[-1]) + BYTES_HEADER
 
-    seen = set()
-    wrappers = set()
+def get_structs(htc=type('',(),{'__slots__':()})):
+    htc_mem = getmem(htc)
+    last = None
+    for ptr, idx in sorted([(ptr, idx) for idx, ptr in enumerate(htc_mem)
+            if id(htc) < ptr < id(htc) + sizeof(htc)]):
+        if last:
+            offset, lp = last
+            yield offset, ptr - lp
+        last = idx, ptr
 
-    for subcls in object.__subclasses__():
-        for name, method in vars(subcls).items():
-            if not name.startswith('__') or not callable(method) or name in seen:
-                continue
-            seen.add(name)
-            oldmem = cls_mem.raw
-            try:
-                setattr(scratch, name, None)
-            except (TypeError, AttributeError) as e:
-                continue
-            if oldmem[base_size:] != cls_mem.raw[base_size:]:
-                for i in range(0, len(oldmem), base_size):
-                    ovalue = int.from_bytes(oldmem[i:i + base_size], sys.byteorder)
-                    nvalue = int.from_bytes(cls_mem.raw[i:i + base_size], sys.byteorder)
-                    if ovalue != nvalue and i != 0:
-                        wrappers.add((
-                            i,
-                            name
-                        ))
-                delattr(scratch, name)
+def allocate_structs(cls):
+    cls_mem = getmem(cls)
+    for subcls in type(cls).__subclasses__(cls):
+        allocate_structs(subcls)
+    for offset, size in get_structs():
+        cls_mem[offset] = cls_mem[offset] or alloc(size)
+    return cls_mem
 
-    for offset, name in wrappers:
-        last = 0
-        for size, location in structs:
-            end = last + size * base_size
-            if last <= offset < end:
-                locs = slotmap.get(name, ())
-                item = (
-                    size,
-                    location * base_size,
-                    size - (end - offset) // base_size
-                )
+def find_offset(mem, val):
+    return [*mem].index(val)
 
-                if item not in locs:
-                    locs += (item,)
+def assert_cls(o):
+    if isinstance(o, type):
+        return o
+    else:
+        raise RuntimeError('Invalid class or object')
 
-                slotmap[name] = locs
-            last = end
-    return slotmap
+def build_unlock_lock():
+    flag_offset = find_offset(getmem(int), int.__flags__)
 
-methods_cache = {}
+    def unlock(cls):
+        cls_mem = allocate_structs(assert_cls(cls))
+        flags = cls.__flags__
+        try:
+            return flags
+        finally:
+            if sys.version_info[0:2] <= (3, 9):
+                cls_mem[flag_offset] |= Py_TPFLAGS_HEAPTYPE
+            elif sys.version_info[0:2] >= (3, 10):
+                cls_mem[flag_offset] &= ~Py_TPFLAGS_IMMUTABLE
 
-def orig(self, *args, **kwargs):
-    '''
-    Inspects the callers frame to deduce the original implmentation of a hooked function
-    The original implmentation is then called with all passed arguments
-    Not intended to be used outside hooked functions
-    '''
-    f = sys._getframe(1) # get callers frame
-    cls = type(self)
-    for key in dir(cls):
-        value = getattr(cls, key, None)
-        if getattr(value, '__code__', None) == f.f_code:
-            for mcls in cls.mro():
-                orig_m = methods_cache.get(f'{itos(id(mcls))}.{key}', None)
-                if orig_m:
-                    return orig_m(self, *args, **kwargs)
-    raise RuntimeError('no original method found')
+    def lock(cls, flags=None):
+        cls_mem = getmem(assert_cls(cls))
+        if flags is None:
+            if sys.version_info[0:2] <= (3, 9):
+                cls_mem[flag_offset] &= ~Py_TPFLAGS_HEAPTYPE
+            elif sys.version_info[0:2] >= (3, 10):
+                cls_mem[flag_offset] |= Py_TPFLAGS_IMMUTABLE
+        else:
+            cls_mem[flag_offset] = flags
 
-def getdict(cls):
+    return unlock, lock
+
+unlock, lock = build_unlock_lock()
+
+def getdict(cls, E=type('',(),{'__eq__':lambda s,o:o})()):
     '''
     Obtains a writeable dictionary of a classes namespace
     Note that any modifications to this dictionary should be followed by a
     call to PyType_Modified(cls)
     '''
-    cls_dict = cls.__dict__ # hold reference due to `cls.__dict__` being a getter
-    if isinstance(cls_dict, dict):
-        return cls_dict
-    return py_object.from_address(id(cls_dict) + 2 * base_size).value
+    return cls.__dict__ == E
 
-def getptrs(cls, slotdata):
+def newref(obj):
+    getmem(obj)[0] += 1
+    return obj
+
+def patch_object():
     '''
-    Yields pointers to all slots on `cls` that are referenced by `slotdata`
-    Will instantialize any non-existant structs
+    adds fake class to inheritance chain so that object can be modified
+    also patches type.__base__ to never return fake class
+    in theory is safe, if not, possible alternative would be injecting a class
+    into all lookups by modifying type.__bases__?
     '''
-    for size, base_addr, secondary_addr in slotdata:
-        base_ptr = c_void_p.from_address(id(cls) + base_addr)
-        struct_addr = base_ptr.value if base_addr else id(cls)
-        if struct_addr:
-            func_ptr = c_void_p.from_address(struct_addr + secondary_addr * base_size)
+
+    int_mem = getmem(int)
+    tp_base_offset = find_offset(int_mem, id(int.__base__))
+    tp_basicsize_offset = find_offset(int_mem, int.__basicsize__)
+    tp_flags_offset = find_offset(int_mem, int.__flags__)
+    tp_dict_offset = find_offset(int_mem, id(getdict(int)))
+    tp_bases_offset = find_offset(int_mem, id(int.__bases__))
+    fake_addr = alloc(sizeof(object))
+    fake_mem = getmem(fake_addr, sizeof(object))
+    fake_mem[0] = 1
+    fake_mem[1] = id(newref(type))
+    fake_mem[3] = alloc(0)
+    fake_mem[tp_flags_offset] = Py_TPFLAGS_READY | Py_TPFLAGS_IMMUTABLE
+    fake_mem[tp_dict_offset] = id(newref({}))
+    fake_mem[tp_bases_offset] = id(newref(()))
+    fake_mem[tp_basicsize_offset] = object.__basicsize__
+    getmem(object)[tp_base_offset] = fake_addr
+
+    # custom __base__ to protect fake super class
+    # also restores original `__base__` functionality
+    @property
+    def __base__(self, object=object, orig=vars(type)['__base__'].__get__):
+        if self is object:
+            return None
+        return orig(self)
+
+    getdict(type)['__base__'] = __base__
+    # call PyType_Modified to reload cache
+    pythonapi.PyType_Modified(py_object(type))
+
+# needed to allow for `unlock(object)` to be stable
+patch_object()
+
+NULL = object()
+class Dunder:
+    __slots__ = ['value']
+    def __init__(self, value):
+        self.value = value
+
+def build_orig():
+    _orig_cache = {}
+    getframe = sys._getframe
+    get_type = vars(object)['__class__'].__get__
+    get_code = vars(type(getframe()))['f_code'].__get__
+    get_consts = vars(type(getframe().f_code))['co_consts'].__get__
+    get_bases = vars(type)['__bases__'].__get__
+    tuple_add = tuple.__add__
+    tuple_iter = tuple.__iter__
+    tuple_len = tuple.__len__
+    tuple_getitem = tuple.__getitem__
+    dict_contains = dict.__contains__
+    dict_getitem = dict.__getitem__
+    dict_setitem = dict.__setitem__
+    dict_pop = dict.pop
+    dict_get = dict.get
+    def orig(self, *args, **kwargs):
+        '''
+        Inspects the callers frame to deduce the original implmentation of a hooked function
+        The original implmentation is then called with all passed arguments
+        Not intended to be used outside hooked functions
+        '''
+        frame = getframe(1)
+        s_c = get_type(self)
+        key = get_code(frame)
+        consts = get_consts(key)
+        if tuple_len(consts) and get_type(dunder := tuple_getitem(consts, -1)) is Dunder:
+            name = dunder.value
         else:
-            new_struct = (c_void_p * size)()
-            struct_addr = base_ptr.value = cast(new_struct, c_void_p).value
-            func_ptr = c_void_p.from_address(struct_addr + secondary_addr * base_size)
-        yield func_ptr
+            raise RuntimeError('orig called outside of hook')
+        for c in tuple_iter(tuple_add((s_c,), get_bases(s_c))):
+            if dict_contains(_orig_cache, (c, name, key)):
+                if (func := dict_get(_orig_cache, (c, name, key))) is not NULL:
+                    return func(self, *args, **kwargs)
+                else:
+                    break
+        raise RuntimeError('original implementation not found')
 
-def update_subcls(cls, pcls):
-    '''
-    Used to update a subclasses slot pointers to those of the base class
-    '''
-    attributes = {}
-    for name in vars(pcls).keys() - key_blacklist:
-        if getattr(cls, name) is getattr(pcls, name):
-            attributes[name] = getattr(pcls, name)
-    if attributes:
-        hook(cls, is_base=False)(body=attributes)
+    def add_to_cache(cls, name, key, func):
+        dict_setitem(_orig_cache, (cls, name, key), func)
 
+    def remove_from_cache(cls, name, key):
+        dict_pop(_orig_cache, (cls, name, key), None)
 
-def hook_cls_from_cls(cls, pcls, is_base=True):
-    '''
-    hooks all dunders in `cls` to use the implmentations specified in `pcls`
-    '''
-    attribute_names = vars(pcls).keys() - key_blacklist
-    attributes = {}
-    for name in attribute_names:
-        hook_id = f'{itos(id(cls))}.{name}'
-        attr = getattr(pcls, name)
-        if callable(attr):
-            orig_m = getattr(cls, name, None)
-            if orig_m and hook_id not in methods_cache and is_base:
-                methods_cache[hook_id] = orig_m
-        if name == '__class_getitem__': #special case (is already bound method, need to rebind)
-            mtype = type(attr)
-            attr = mtype(attr.__func__, cls)
-        attributes[name] = attr
-        if is_base:
-            hooks.add(hook_id)
-        slotdata = generate_slotmap().get(name)
-        if slotdata:
-            ocls_ptrs = getptrs(cls, slotdata)
-            pcls_ptrs = getptrs(pcls, slotdata)
-            for optr, pptr in zip(ocls_ptrs, pcls_ptrs):
-                optr.value = pptr.value
-    if is_base:
-        getdict(cls).update(attributes)
-    pythonapi.PyType_Modified(py_object(cls))
-    for subcls in type(cls).__subclasses__(cls):
-        update_subcls(subcls, pcls)
+    def get_from_cache(cls, name, key):
+        return dict_get(_orig_cache, (cls, name, key))
 
-def hook_cls(cls, **kwargs):
+    return orig, add_to_cache, get_from_cache, remove_from_cache
+
+orig, add_to_cache, get_from_cache, remove_from_cache = build_orig()
+
+def force_setattr(cls, attr, value):
+    flags = None
+    try:
+        flags = unlock(cls)
+        setattr(cls, attr, value)
+    finally:
+        lock(cls, flags)
+        pythonapi.PyType_Modified(py_object(cls))
+
+def force_delattr(cls, attr):
+    flags = None
+    try:
+        flags = unlock(cls)
+        delattr(cls, attr)
+    finally:
+        lock(cls, flags)
+        pythonapi.PyType_Modified(py_object(cls))
+
+def hook(cls, name=None, func=None):
+    '''
+    Decorator, allows for the decoration of functions to hook a specified dunder on a static class
+    ex:
+
+    @hook(int)
+    def __add__(self, other):
+        ...
+
+    would set the implmentation of `int.__add__` to the `__add__` specified above
+    Note that this function can also be used for non-function attributes,
+    however it is recommended to use `hook_cls` for batch hooks
+    '''
+    def wrapper(func):
+        nonlocal name
+        code = func.__code__
+        name = name or code.co_name
+        orig = vars(cls).get(name, NULL)
+        func_copy = type(func)(
+            code.replace(co_consts=code.co_consts+(Dunder(name),)),
+            func.__globals__,
+            name=func.__name__,
+            closure=func.__closure__
+        )
+        add_to_cache(cls, name, func_copy.__code__, orig)
+        func_copy.__defaults__ = func.__defaults__
+        func_copy.__kwdefaults__ = func.__kwdefaults__
+        func_copy.__qualname__ = func.__qualname__
+        force_setattr(cls, name, func_copy)
+        return func
+    if func:
+        return wrapper(func)
+    return wrapper
+
+def unhook(cls, name):
+    '''
+    Removes new implmentation on static dunder
+    Restores the original implmentation of a static dunder if it exists
+    Will also delete non-dunders
+    '''
+    current = getattr(cls, name)
+    orig_val = get_from_cache(cls, name, current.__code__)
+    if orig_val is not NULL:
+        force_setattr(cls, name, orig_val)
+    else:
+        force_delattr(cls, name)
+    remove_from_cache(cls, name, current.__code__)
+
+def hook_cls(cls, ncls=None):
     '''
     Decorator, allows for the decoration of classes to hook static classes
     ex:
@@ -199,57 +286,24 @@ def hook_cls(cls, **kwargs):
 
     would apply all of the attributes specified in `int_hook` to `int`
     '''
-    def pwrapper(pcls):
-        hook_cls_from_cls(cls, pcls, **kwargs)
-    return pwrapper
+    def wrapper(ncls):
+        key_blacklist = vars(type('',(),{})).keys()
+        for (attr, value) in sorted(vars(ncls).items(), key=lambda v:callable(v[1]), reverse=True):
+            if attr in key_blacklist:
+                continue
+            if callable(value):
+                try:
+                    hook(cls, name=attr, func=value)
+                    continue
+                except RuntimeError:
+                    pass
+            force_setattr(cls, attr, value)
+    if ncls:
+        return wrapper(ncls)
+    return wrapper
 
-class P:pass
-
-def hook(cls, name=None, **kwargs):
-    '''
-    Decorator, allows for the decoration of functions to hook a specified dunder on a static class
-    ex:
-
-    @hook(int)
-    def __add__(self, other):
-        ...
-
-    would set the implmentation of `int.__add__` to the `__add__` specified above
-    Note that this function can also be used for non-function attributes,
-    however it is recommended to use `hook_cls` for batch hooks
-    '''
-    def pwrapper(attr=None, body=None):
-        body = body or {}
-        if attr is not None:
-            nonlocal name
-            if name is None:
-                name = attr.__name__
-            body[name] = attr
-        if body:
-            hook_cls_from_cls(cls, type(f'<{itos(id(cls))}>', (P,), body), **kwargs)
-    return pwrapper
-
-def unhook(cls, name):
-    '''
-    Removes new implmentation on static dunder
-    Restores the original implmentation of a static dunder if it exists
-    Will also delete non-dunders
-    '''
-    hook_id = f'{itos(id(cls))}.{name}'
-    if hook_id in hooks:
-        cls_dict = getdict(cls)
-        del cls_dict[name]
-        inherited_dict = {}
-        for mcls in cls.mro()[::-1]:
-            if mcls != cls:
-                inherited_dict.update(vars(mcls))
-        for mcls in cls.mro():
-            orig_m = methods_cache.pop(f'{itos(id(mcls))}.{name}', None)
-            if orig_m:
-                if orig_m not in inherited_dict.values():
-                    cls_dict[name] = orig_m
-                break
-        hooks.remove(hook_id)
-        pythonapi.PyType_Modified(py_object(cls))
-    else:
-        raise RuntimeError(f'{cls.__name__}.{name} not hooked')
+@hook(int, name='__add__')
+@hook(int, name='__matmul__')
+def inthook(self, other):
+    print(self, other)
+    return orig(self, other)
