@@ -301,9 +301,3 @@ def hook_cls(cls, ncls=None):
     if ncls:
         return wrapper(ncls)
     return wrapper
-
-@hook(int, name='__add__')
-@hook(int, name='__matmul__')
-def inthook(self, other):
-    print(self, other)
-    return orig(self, other)
