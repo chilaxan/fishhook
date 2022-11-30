@@ -158,8 +158,9 @@ class Dunder:
 def build_orig():
     _orig_cache = {}
     getframe = sys._getframe
-    get_type = vars(object)['__class__'].__get__
+    get_type = lambda o:o.__class__
     get_code = vars(type(getframe()))['f_code'].__get__
+    get_back = vars(type(getframe()))['f_back'].__get__
     get_consts = vars(type(getframe().f_code))['co_consts'].__get__
     get_bases = vars(type)['__bases__'].__get__
     tuple_add = tuple.__add__
@@ -173,17 +174,22 @@ def build_orig():
     dict_get = dict.get
     def orig(self, *args, **kwargs):
         '''
-        Inspects the callers frame to deduce the original implmentation of a hooked function
-        The original implmentation is then called with all passed arguments
+        Inspects the callers frame to deduce the original implementation of a hooked function
+        The original implementation is then called with all passed arguments
         Not intended to be used outside hooked functions
         '''
-        frame = getframe(1)
-        s_c = get_type(self)
-        key = get_code(frame)
-        consts = get_consts(key)
-        if tuple_len(consts) and get_type(dunder := tuple_getitem(consts, -1)) is Dunder:
-            name = dunder.value
-        else:
+        name = None
+        level = 1
+        frame = getframe(level)
+        while name is None and frame is not None:
+            s_c = get_type(self)
+            key = get_code(frame)
+            consts = get_consts(key)
+            if tuple_len(consts) and get_type(dunder := tuple_getitem(consts, -1)) is Dunder:
+                name = dunder.value
+                break
+            frame = get_back(frame)
+        if name is None:
             raise RuntimeError('orig called outside of hook')
         for c in tuple_iter(tuple_add((s_c,), get_bases(s_c))):
             if dict_contains(_orig_cache, (c, name, key)):
@@ -233,7 +239,7 @@ def hook(cls, name=None, func=None):
     def __add__(self, other):
         ...
 
-    would set the implmentation of `int.__add__` to the `__add__` specified above
+    would set the implementation of `int.__add__` to the `__add__` specified above
     Note that this function can also be used for non-function attributes,
     however it is recommended to use `hook_cls` for batch hooks
     '''
@@ -260,8 +266,8 @@ def hook(cls, name=None, func=None):
 
 def unhook(cls, name):
     '''
-    Removes new implmentation on static dunder
-    Restores the original implmentation of a static dunder if it exists
+    Removes new implementation on static dunder
+    Restores the original implementation of a static dunder if it exists
     Will also delete non-dunders
     '''
     current = getattr(cls, name)
