@@ -275,34 +275,45 @@ def unhook(cls, name):
         force_delattr(cls, name)
     remove_from_cache(cls, name, current.__code__)
 
-flags = {v:k for k, v in dis.COMPILER_FLAG_NAMES.items()}
+def build_get_self():
+    flag = {v:k for k, v in dis.COMPILER_FLAG_NAMES.items()}.get
+    frame_items = vars(type(sys._getframe()))
+    get_code = frame_items['f_code'].__get__
+    get_locals = frame_items['f_locals'].__get__
+    code_items = vars(type((lambda:0).__code__))
+    get_varnames = code_items['co_varnames'].__get__
+    get_argcount = code_items['co_argcount'].__get__
+    get_kwonlyargcount = code_items['co_kwonlyargcount'].__get__
+    get_flags = code_items['co_flags'].__get__
+    dict_get = dict.get
+    int_add = int.__add__
+    int_and = int.__and__
+    list_getitem = list.__getitem__
+    list_add = list.__add__
+    tuple_getitem = tuple.__getitem__
+    def get_self(frame, cls):
+        co = get_code(frame)
+        locals = get_locals(frame)
+        names = get_varnames(co)
+        nargs = get_argcount(co)
+        nkwargs = get_kwonlyargcount(co)
+        args = tuple_getitem(names, slice(None, nargs, None))
 
-def get_self(frame, cls):
-    co = frame.f_code
-    locals = frame.f_locals
-    names = co.co_varnames
-    nargs = co.co_argcount
-    nkwargs = co.co_kwonlyargcount
-    args = list(names[:nargs])
-    kwonlyargs = list(names[nargs:nargs+nkwargs])
-    step = 0
+        nargs = int_add(nargs, nkwargs)
+        varargs = None
+        if int_and(get_flags(co), flag('VARARGS')):
+            varargs = tuple_getitem(names, nargs)
 
-    nargs += nkwargs
-    varargs = None
-    if co.co_flags & flags['VARARGS']:
-        varargs = co.co_varnames[nargs]
-        nargs = nargs + 1
-    varkw = None
-    if co.co_flags & flags['VARKEYWORDS']:
-        varkw = co.co_varnames[nargs]
-
-    argvals = tuple(locals.get(arg, NULL) for arg in args) + locals.get(varargs, ())
-    if not argvals:
+        argvals = list_add([dict_get(locals, arg, NULL) for arg in args], [*dict_get(locals, varargs, ())])
+        if not argvals:
+            raise RuntimeError('unable to get self')
+        self = list_getitem(argvals, 0)
+        if isinstance(self, cls):
+            return self
         raise RuntimeError('unable to get self')
-    self = argvals[0]
-    if isinstance(self, cls):
-        return self
-    raise RuntimeError('unable to get self')
+    return get_self
+
+get_self = build_get_self()
 
 class hook_property:
     '''
