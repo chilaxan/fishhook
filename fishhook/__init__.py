@@ -10,7 +10,7 @@ functionality using the `unhook` function
 __all__ = ['orig', 'hook_cls', 'hook', 'unhook']
 
 from ctypes import c_char, pythonapi, py_object
-import sys
+import sys, dis
 
 BYTES_HEADER = bytes.__basicsize__ - 1
 
@@ -179,8 +179,7 @@ def build_orig():
         Not intended to be used outside hooked functions
         '''
         name = None
-        level = 1
-        frame = getframe(level)
+        frame = getframe(1)
         while name is None and frame is not None:
             s_c = get_type(self)
             key = get_code(frame)
@@ -240,8 +239,6 @@ def hook(cls, name=None, func=None):
         ...
 
     would set the implementation of `int.__add__` to the `__add__` specified above
-    Note that this function can also be used for non-function attributes,
-    however it is recommended to use `hook_cls` for batch hooks
     '''
     def wrapper(func):
         nonlocal name
@@ -278,6 +275,166 @@ def unhook(cls, name):
         force_delattr(cls, name)
     remove_from_cache(cls, name, current.__code__)
 
+flags = {v:k for k, v in dis.COMPILER_FLAG_NAMES.items()}
+
+def get_self(frame, cls):
+    co = frame.f_code
+    locals = frame.f_locals
+    names = co.co_varnames
+    nargs = co.co_argcount
+    nkwargs = co.co_kwonlyargcount
+    args = list(names[:nargs])
+    kwonlyargs = list(names[nargs:nargs+nkwargs])
+    step = 0
+
+    nargs += nkwargs
+    varargs = None
+    if co.co_flags & flags['VARARGS']:
+        varargs = co.co_varnames[nargs]
+        nargs = nargs + 1
+    varkw = None
+    if co.co_flags & flags['VARKEYWORDS']:
+        varkw = co.co_varnames[nargs]
+
+    argvals = tuple(locals.get(arg, NULL) for arg in args) + locals.get(varargs, ())
+    if not argvals:
+        raise RuntimeError('unable to get self')
+    self = argvals[0]
+    if isinstance(self, cls):
+        return self
+    raise RuntimeError('unable to get self')
+
+class hook_property:
+    '''
+    Descriptor, allows for hooking a specified descriptor on a class
+    ex:
+
+    @hook.property(int)
+    def imag(self):
+        ...
+
+    @imag.setter
+    def imag_setter(self, value):
+        ...
+
+    would set the implementation of `int.imag.__get__` to the `imag` specified above
+    and set `int.imag.__set__` to `imag_setter`
+    '''
+    def __init__(self, cls, name=None, fget=None, fset=None, fdel=None):
+        self.cls = cls
+        self.prop = property()
+        self.name = name
+        self.__orig = NULL
+        self.fget = fget
+        self.fset = fset
+        self.fdel = fdel
+        if fget:
+            self.getter(fget)
+        if fset:
+            self.setter(fset)
+        if fdel:
+            self.deleter(fdel)
+
+    def __set_prop(self, prop):
+        names = [self.name] + [p.__name__ for p in [prop.fget, prop.fset, prop.fdel] if p]
+        for name in names:
+            if name is not None:
+                self.name = name
+                break
+        if self.name is None:
+            raise RuntimeError('Invalid Hook')
+        orig = vars(self.cls).get(self.name, NULL)
+        if orig is not self.prop:
+            self.__orig = orig
+            if self.fget is None:
+                prop = prop.getter(orig.__get__)
+            if self.fset is None:
+                prop = prop.setter(orig.__set__)
+            if self.fdel is None:
+                prop = prop.deleter(orig.__delete__)
+        force_setattr(self.cls, self.name, prop)
+        self.prop = prop
+
+    def unhook(self):
+        if self.name is None:
+            raise RuntimeError('Invalid Hook')
+        if self.__orig is NULL:
+            force_delattr(self.cls, self.name)
+        else:
+            force_setattr(self.cls, self.name, self.__orig)
+        self.name = None
+
+    def build_orig():
+        getframe = sys._getframe
+        get_fcode = vars(type(getframe()))['f_code'].__get__
+        get_back = vars(type(getframe()))['f_back'].__get__
+        get_code = vars(type(lambda:0))['__code__'].__get__
+        @property
+        def orig(self):
+            if self.__orig is NULL:
+                raise RuntimeError('could not find original implementation')
+            frame = getframe(1)
+            while frame is not None:
+                if get_fcode(frame) in [get_code(func) for func in [self.fget, self.fset, self.fdel] if func]:
+                    break
+                frame = get_back(frame)
+            if frame is None:
+                raise RuntimeError(f'{self.name}.orig should only be used insided hook')
+            upper_self = get_self(frame, self.cls)
+            return self.__orig.__get__(upper_self)
+
+        @orig.setter
+        def orig(self, value):
+            if self.__orig is NULL:
+                raise RuntimeError('could not find original implementation')
+            frame = getframe(1)
+            while frame is not None:
+                if get_fcode(frame) in [get_code(func) for func in [self.fget, self.fset, self.fdel] if func]:
+                    break
+                frame = get_back(frame)
+            if frame is None:
+                raise RuntimeError(f'{self.name}.orig should only be used insided hook')
+            upper_self = get_self(frame, self.cls)
+            self.__orig.__set__(upper_self, value)
+
+        @orig.deleter
+        def orig(self):
+            if self.__orig is NULL:
+                raise RuntimeError('could not find original implementation')
+            frame = getframe(1)
+            while frame is not None:
+                if get_fcode(frame) in [get_code(func) for func in [self.fget, self.fset, self.fdel] if func]:
+                    break
+                frame = get_back(frame)
+            if frame is None:
+                raise RuntimeError(f'{self.name}.orig should only be used insided hook')
+            upper_self = get_self(frame, self.cls)
+            self.__orig.__delete__(upper_self)
+        return orig
+
+    orig = build_orig()
+    del build_orig
+
+    def __call__(self, func):
+        return self.getter(func)
+
+    def getter(self, func):
+        self.fget = func
+        self.__set_prop(self.prop.getter(func))
+        return self
+
+    def setter(self, func):
+        self.fset = func
+        self.__set_prop(self.prop.setter(func))
+        return self
+
+    def deleter(self, func):
+        self.fdel = func
+        self.__set_prop(self.prop.deleter(func))
+        return self
+
+hook.property = hook_property
+
 def hook_cls(cls, ncls=None):
     '''
     Decorator, allows for the decoration of classes to hook static classes
@@ -297,6 +454,8 @@ def hook_cls(cls, ncls=None):
         for (attr, value) in sorted(vars(ncls).items(), key=lambda v:callable(v[1]), reverse=True):
             if attr in key_blacklist:
                 continue
+            if isinstance(value, property):
+                setattr(ncls, attr, hook_property(cls, name=attr, fget=value.fget, fset=value.fset, fdel=value.fdel))
             if callable(value):
                 try:
                     hook(cls, name=attr, func=value)
@@ -304,6 +463,7 @@ def hook_cls(cls, ncls=None):
                 except RuntimeError:
                     pass
             force_setattr(cls, attr, value)
+        return ncls
     if ncls:
         return wrapper(ncls)
     return wrapper
