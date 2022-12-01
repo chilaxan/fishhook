@@ -418,16 +418,12 @@ def hook_cls(cls, ncls=None):
         for (attr, value) in sorted(vars(ncls).items(), key=lambda v:callable(v[1]), reverse=True):
             if attr in key_blacklist:
                 continue
-            if isinstance(value, property):
+            elif isinstance(value, property):
                 setattr(ncls, attr, hook_property(cls, name=attr, fget=value.fget, fset=value.fset, fdel=value.fdel))
-                continue
-            if callable(value):
-                try:
-                    hook(cls, name=attr, func=value)
-                    continue
-                except RuntimeError:
-                    pass
-            force_setattr(cls, attr, value)
+            elif isinstance(value, type(lambda:0)):
+                hook(cls, name=attr, func=value)
+            else:
+                force_setattr(cls, attr, value)
         return ncls
     if ncls:
         return wrapper(ncls)
