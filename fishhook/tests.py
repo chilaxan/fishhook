@@ -1,5 +1,5 @@
 import unittest
-from __init__ import hook, unhook, orig, force_delattr
+from . import hook, unhook, orig, force_delattr
 
 class TestFishhook(unittest.TestCase):
     def test_hook_dunder(self):
