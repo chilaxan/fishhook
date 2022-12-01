@@ -149,68 +149,6 @@ def patch_object():
 # needed to allow for `unlock(object)` to be stable
 patch_object()
 
-NULL = object()
-class Dunder:
-    __slots__ = ['value']
-    def __init__(self, value):
-        self.value = value
-
-def build_orig():
-    _orig_cache = {}
-    getframe = sys._getframe
-    get_type = lambda o:o.__class__
-    get_code = vars(type(getframe()))['f_code'].__get__
-    get_back = vars(type(getframe()))['f_back'].__get__
-    get_consts = vars(type(getframe().f_code))['co_consts'].__get__
-    get_bases = vars(type)['__bases__'].__get__
-    tuple_add = tuple.__add__
-    tuple_iter = tuple.__iter__
-    tuple_len = tuple.__len__
-    tuple_getitem = tuple.__getitem__
-    dict_contains = dict.__contains__
-    dict_getitem = dict.__getitem__
-    dict_setitem = dict.__setitem__
-    dict_pop = dict.pop
-    dict_get = dict.get
-    def orig(self, *args, **kwargs):
-        '''
-        Inspects the callers frame to deduce the original implementation of a hooked function
-        The original implementation is then called with all passed arguments
-        Not intended to be used outside hooked functions
-        '''
-        name = None
-        frame = getframe(1)
-        while name is None and frame is not None:
-            s_c = get_type(self)
-            key = get_code(frame)
-            consts = get_consts(key)
-            if tuple_len(consts) and get_type(dunder := tuple_getitem(consts, -1)) is Dunder:
-                name = dunder.value
-                break
-            frame = get_back(frame)
-        if name is None:
-            raise RuntimeError('orig called outside of hook')
-        for c in tuple_iter(tuple_add((s_c,), get_bases(s_c))):
-            if dict_contains(_orig_cache, (c, name, key)):
-                if (func := dict_get(_orig_cache, (c, name, key))) is not NULL:
-                    return func(self, *args, **kwargs)
-                else:
-                    break
-        raise RuntimeError('original implementation not found')
-
-    def add_to_cache(cls, name, key, func):
-        dict_setitem(_orig_cache, (cls, name, key), func)
-
-    def remove_from_cache(cls, name, key):
-        dict_pop(_orig_cache, (cls, name, key), None)
-
-    def get_from_cache(cls, name, key):
-        return dict_get(_orig_cache, (cls, name, key))
-
-    return orig, add_to_cache, get_from_cache, remove_from_cache
-
-orig, add_to_cache, get_from_cache, remove_from_cache = build_orig()
-
 def force_setattr(cls, attr, value):
     flags = None
     try:
@@ -229,6 +167,121 @@ def force_delattr(cls, attr):
         lock(cls, flags)
         pythonapi.PyType_Modified(py_object(cls))
 
+NULL = object()
+NOT_FOUND = object()
+def build_orig():
+    class Cache:
+        __slots__ = ['key', 'value']
+        def __init__(self, key, value):
+            self.key = key
+            self.value = value
+
+    def add_cache(func, **kwargs):
+        code = func.__code__
+        func_copy = type(func)(
+            code.replace(co_consts=code.co_consts+tuple(Cache(key, value) for key, value in kwargs.items())),
+            func.__globals__,
+            name=func.__name__,
+            closure=func.__closure__
+        )
+        func_copy.__defaults__ = func.__defaults__
+        func_copy.__kwdefaults__ = func.__kwdefaults__
+        func_copy.__qualname__ = func.__qualname__
+        return func_copy
+
+    getframe = sys._getframe
+    frame_items = vars(type(sys._getframe()))
+    get_code = frame_items['f_code'].__get__
+    get_back = frame_items['f_back'].__get__
+    get_locals = frame_items['f_locals'].__get__
+    code_items = vars(type((lambda:0).__code__))
+    get_consts = code_items['co_consts'].__get__
+    get_varnames = code_items['co_varnames'].__get__
+    get_argcount = code_items['co_argcount'].__get__
+    get_kwonlyargcount = code_items['co_kwonlyargcount'].__get__
+    get_flags = code_items['co_flags'].__get__
+    tuple_getitem = tuple.__getitem__
+    tuple_iter = tuple.__iter__
+    tuple_len = tuple.__len__
+    int_add = int.__add__
+    int_and = int.__and__
+    int_bool = int.__bool__
+    dict_get = dict.get
+    flags = {v: k for k, v in dis.COMPILER_FLAG_NAMES.items()}.get
+    def get_cache(code, key):
+        consts = get_consts(code)
+        for cache in tuple_iter(tuple_getitem(consts, slice(None, None, -1))):
+            if isinstance(cache, Cache):
+                if cache.key == key:
+                    return cache.value
+            else:
+                break # caches are injected at end of consts array
+        return NOT_FOUND
+
+    def get_cache_trace(key, frame):
+        while frame is not None:
+            code = get_code(frame)
+            if (val := get_cache(code, key)) is not NOT_FOUND:
+                if val is NULL:
+                    raise RuntimeError('original implementation not found')
+                return val
+            frame = get_back(frame)
+        raise RuntimeError('orig used incorrectly')
+
+    def get_self(frame):
+        co = get_code(frame)
+        locals = get_locals(frame)
+        names = get_varnames(co)
+        nargs = get_argcount(co)
+        nkwargs = get_kwonlyargcount(co)
+        args = tuple_getitem(names, slice(None, nargs, None))
+        nargs = int_add(nargs, nkwargs)
+        varargs = None
+        if int_bool(int_and(get_flags(co), flags('VARARGS'))):
+            varargs = tuple_getitem(names, nargs)
+        argvals = tuple(dict_get(locals, arg, NULL) for arg in tuple_iter(args))+dict_get(locals, varargs, ())
+        if int_bool(tuple_len(argvals)) and (self := tuple_getitem(argvals, 0)) is not NULL:
+            return self
+        raise RuntimeError('unable to bind self')
+
+    class Orig:
+        '''
+        Inspects the callers frame to deduce the original implementation of a hooked function
+        The original implementation is then called with all passed arguments
+        Not intended to be used outside hooked functions
+        '''
+        def __call__(self, *args, **kwargs):
+            return get_cache_trace('orig', getframe(1))(*args, **kwargs)
+
+        def __getattr__(self, attr):
+            frame = getframe(1)
+            orig_attr = get_cache_trace('orig', frame)
+            attr_name = get_cache_trace('attr_name', frame)
+            if attr_name != attr:
+                raise AttributeError('attribute not currently bound to \'orig\'')
+            return orig_attr.__get__(get_self(frame))
+
+        def __setattr__(self, attr, value):
+            frame = getframe(1)
+            orig_attr = get_cache_trace('orig', frame)
+            attr_name = get_cache_trace('attr_name', frame)
+            if attr_name != attr:
+                raise AttributeError('attribute not currently bound to \'orig\'')
+            return orig_attr.__set__(get_self(frame), value)
+
+        def __delattr__(self, attr):
+            frame = getframe(1)
+            orig_attr = get_cache_trace('orig', frame)
+            attr_name = get_cache_trace('attr_name', frame)
+            if attr_name != attr:
+                raise AttributeError('attribute not currently bound to \'orig\'')
+            return orig_attr.__delete__(get_self(frame))
+
+    return Orig(), add_cache, get_cache
+
+orig, add_cache, get_cache = build_orig()
+del build_orig
+
 def hook(cls, name=None, func=None):
     '''
     Decorator, allows for the decoration of functions to hook a specified dunder on a static class
@@ -244,18 +297,8 @@ def hook(cls, name=None, func=None):
         nonlocal name
         code = func.__code__
         name = name or code.co_name
-        orig = vars(cls).get(name, NULL)
-        func_copy = type(func)(
-            code.replace(co_consts=code.co_consts+(Dunder(name),)),
-            func.__globals__,
-            name=func.__name__,
-            closure=func.__closure__
-        )
-        add_to_cache(cls, name, func_copy.__code__, orig)
-        func_copy.__defaults__ = func.__defaults__
-        func_copy.__kwdefaults__ = func.__kwdefaults__
-        func_copy.__qualname__ = func.__qualname__
-        force_setattr(cls, name, func_copy)
+        orig_val = vars(cls).get(name, NULL)
+        force_setattr(cls, name, add_cache(func, orig=orig_val))
         return func
     if func:
         return wrapper(func)
@@ -268,52 +311,20 @@ def unhook(cls, name):
     Will also delete non-dunders
     '''
     current = getattr(cls, name)
-    orig_val = get_from_cache(cls, name, current.__code__)
+    if isinstance(current, property):
+        for func in [current.fget, current.fset, current.fdel]:
+            if hasattr(func, '__code__'):
+                current = func
+                break
+    if not hasattr(current, '__code__'):
+        raise RuntimeError('not hooked')
+    orig_val = get_cache(current.__code__, 'orig')
+    if orig_val is NOT_FOUND:
+        raise RuntimeError('not hooked')
     if orig_val is not NULL:
         force_setattr(cls, name, orig_val)
     else:
         force_delattr(cls, name)
-    remove_from_cache(cls, name, current.__code__)
-
-def build_get_self():
-    flag = {v:k for k, v in dis.COMPILER_FLAG_NAMES.items()}.get
-    frame_items = vars(type(sys._getframe()))
-    get_code = frame_items['f_code'].__get__
-    get_locals = frame_items['f_locals'].__get__
-    code_items = vars(type((lambda:0).__code__))
-    get_varnames = code_items['co_varnames'].__get__
-    get_argcount = code_items['co_argcount'].__get__
-    get_kwonlyargcount = code_items['co_kwonlyargcount'].__get__
-    get_flags = code_items['co_flags'].__get__
-    dict_get = dict.get
-    int_add = int.__add__
-    int_and = int.__and__
-    list_getitem = list.__getitem__
-    list_add = list.__add__
-    tuple_getitem = tuple.__getitem__
-    def get_self(frame, cls):
-        co = get_code(frame)
-        locals = get_locals(frame)
-        names = get_varnames(co)
-        nargs = get_argcount(co)
-        nkwargs = get_kwonlyargcount(co)
-        args = tuple_getitem(names, slice(None, nargs, None))
-
-        nargs = int_add(nargs, nkwargs)
-        varargs = None
-        if int_and(get_flags(co), flag('VARARGS')):
-            varargs = tuple_getitem(names, nargs)
-
-        argvals = list_add([dict_get(locals, arg, NULL) for arg in args], [*dict_get(locals, varargs, ())])
-        if not argvals:
-            raise RuntimeError('unable to get self')
-        self = list_getitem(argvals, 0)
-        if isinstance(self, cls):
-            return self
-        raise RuntimeError('unable to get self')
-    return get_self
-
-get_self = build_get_self()
 
 class hook_property:
     '''
@@ -346,102 +357,47 @@ class hook_property:
         if fdel:
             self.deleter(fdel)
 
-    def __set_prop(self, prop):
-        names = [self.name] + [p.__name__ for p in [prop.fget, prop.fset, prop.fdel] if p]
+    def __prep(self, func):
+        prop = self.prop
+        names = [self.name] + [func.__name__] + [p.__name__ for p in [prop.fget, prop.fset, prop.fdel] if p]
         for name in names:
             if name is not None:
                 self.name = name
                 break
+        orig = vars(self.cls).get(self.name, NULL)
+        if self.__orig is NULL and orig is not prop and orig is not NULL:
+            self.__orig = orig
+        return add_cache(func, orig=self.__orig, attr_name=self.name)
+
+    def __set_prop(self, prop):
         if self.name is None:
             raise RuntimeError('Invalid Hook')
-        orig = vars(self.cls).get(self.name, NULL)
-        if orig is not self.prop:
-            self.__orig = orig
+        if self.__orig is not NULL:
             if self.fget is None:
-                prop = prop.getter(orig.__get__)
+                prop = prop.getter(self.__orig.__get__)
             if self.fset is None:
-                prop = prop.setter(orig.__set__)
+                prop = prop.setter(self.__orig.__set__)
             if self.fdel is None:
-                prop = prop.deleter(orig.__delete__)
+                prop = prop.deleter(self.__orig.__delete__)
         force_setattr(self.cls, self.name, prop)
         self.prop = prop
-
-    def unhook(self):
-        if self.name is None:
-            raise RuntimeError('Invalid Hook')
-        if self.__orig is NULL:
-            force_delattr(self.cls, self.name)
-        else:
-            force_setattr(self.cls, self.name, self.__orig)
-        self.name = None
-
-    def build_orig():
-        getframe = sys._getframe
-        get_fcode = vars(type(getframe()))['f_code'].__get__
-        get_back = vars(type(getframe()))['f_back'].__get__
-        get_code = vars(type(lambda:0))['__code__'].__get__
-        @property
-        def orig(self):
-            if self.__orig is NULL:
-                raise RuntimeError('could not find original implementation')
-            frame = getframe(1)
-            while frame is not None:
-                if get_fcode(frame) in [get_code(func) for func in [self.fget, self.fset, self.fdel] if func]:
-                    break
-                frame = get_back(frame)
-            if frame is None:
-                raise RuntimeError(f'{self.name}.orig should only be used insided hook')
-            upper_self = get_self(frame, self.cls)
-            return self.__orig.__get__(upper_self)
-
-        @orig.setter
-        def orig(self, value):
-            if self.__orig is NULL:
-                raise RuntimeError('could not find original implementation')
-            frame = getframe(1)
-            while frame is not None:
-                if get_fcode(frame) in [get_code(func) for func in [self.fget, self.fset, self.fdel] if func]:
-                    break
-                frame = get_back(frame)
-            if frame is None:
-                raise RuntimeError(f'{self.name}.orig should only be used insided hook')
-            upper_self = get_self(frame, self.cls)
-            self.__orig.__set__(upper_self, value)
-
-        @orig.deleter
-        def orig(self):
-            if self.__orig is NULL:
-                raise RuntimeError('could not find original implementation')
-            frame = getframe(1)
-            while frame is not None:
-                if get_fcode(frame) in [get_code(func) for func in [self.fget, self.fset, self.fdel] if func]:
-                    break
-                frame = get_back(frame)
-            if frame is None:
-                raise RuntimeError(f'{self.name}.orig should only be used insided hook')
-            upper_self = get_self(frame, self.cls)
-            self.__orig.__delete__(upper_self)
-        return orig
-
-    orig = build_orig()
-    del build_orig
 
     def __call__(self, func):
         return self.getter(func)
 
     def getter(self, func):
-        self.fget = func
-        self.__set_prop(self.prop.getter(func))
+        self.fget = self.__prep(func)
+        self.__set_prop(self.prop.getter(self.fget))
         return self
 
     def setter(self, func):
-        self.fset = func
-        self.__set_prop(self.prop.setter(func))
+        self.fset = self.__prep(func)
+        self.__set_prop(self.prop.setter(self.fset))
         return self
 
     def deleter(self, func):
-        self.fdel = func
-        self.__set_prop(self.prop.deleter(func))
+        self.fdel = self.__prep(func)
+        self.__set_prop(self.prop.deleter(self.fdel))
         return self
 
 hook.property = hook_property

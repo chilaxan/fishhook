@@ -35,7 +35,7 @@ class int_hook:
 @hook.property(int)
 def imag(self):
   ...
-  return imag.orig
+  return orig.imag
 ```
 #### Links
 
