@@ -7,7 +7,7 @@ unused dunders. A hooked static dunder can be restored to original
 functionality using the `unhook` function
 '''
 
-__all__ = ['orig', 'hook_cls', 'hook', 'unhook']
+__all__ = ['orig', 'hook', 'unhook']
 
 from ctypes import c_char, pythonapi, py_object
 import sys, dis
@@ -347,9 +347,6 @@ class hook_property:
         self.prop = property()
         self.name = name
         self.__orig = NULL
-        self.fget = fget
-        self.fset = fset
-        self.fdel = fdel
         if fget:
             self.getter(fget)
         if fset:
@@ -373,11 +370,11 @@ class hook_property:
         if self.name is None:
             raise RuntimeError('Invalid Hook')
         if self.__orig is not NULL:
-            if self.fget is None:
+            if prop.fget is None:
                 prop = prop.getter(self.__orig.__get__)
-            if self.fset is None:
+            if prop.fset is None:
                 prop = prop.setter(self.__orig.__set__)
-            if self.fdel is None:
+            if prop.fdel is None:
                 prop = prop.deleter(self.__orig.__delete__)
         force_setattr(self.cls, self.name, prop)
         self.prop = prop
@@ -407,7 +404,7 @@ def hook_cls(cls, ncls=None):
     Decorator, allows for the decoration of classes to hook static classes
     ex:
 
-    @hook_cls(int)
+    @hook.cls(int)
     class int_hook:
         attr = ...
 
@@ -423,6 +420,7 @@ def hook_cls(cls, ncls=None):
                 continue
             if isinstance(value, property):
                 setattr(ncls, attr, hook_property(cls, name=attr, fget=value.fget, fset=value.fset, fdel=value.fdel))
+                continue
             if callable(value):
                 try:
                     hook(cls, name=attr, func=value)
@@ -434,3 +432,5 @@ def hook_cls(cls, ncls=None):
     if ncls:
         return wrapper(ncls)
     return wrapper
+
+hook.cls = hook_cls

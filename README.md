@@ -22,7 +22,7 @@ def __add__(self, other):
 
 ### hooking multiple methods
 ```py
-@hook_cls(int)
+@hook.cls(int)
 class int_hook:
   attr = ...
 
