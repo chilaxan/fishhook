@@ -197,9 +197,10 @@ def build_orig():
     int_bool = int.__bool__
     dict_get = dict.get
     flags = {v: k for k, v in dis.COMPILER_FLAG_NAMES.items()}.get
+    new_slice = slice.__call__
     def get_cache(code, key):
         consts = get_consts(code)
-        for cache in tuple_iter(tuple_getitem(consts, slice(None, None, -1))):
+        for cache in tuple_iter(tuple_getitem(consts, new_slice(None, None, -1))):
             if isinstance(cache, Cache):
                 if cache.key == key:
                     return cache.value
@@ -223,12 +224,12 @@ def build_orig():
         names = get_varnames(co)
         nargs = get_argcount(co)
         nkwargs = get_kwonlyargcount(co)
-        args = tuple_getitem(names, slice(None, nargs, None))
+        args = tuple_getitem(names, new_slice(None, nargs, None))
         nargs = int_add(nargs, nkwargs)
         varargs = None
         if int_bool(int_and(get_flags(co), flags('VARARGS'))):
             varargs = tuple_getitem(names, nargs)
-        argvals = tuple(dict_get(locals, arg, NULL) for arg in tuple_iter(args))+dict_get(locals, varargs, ())
+        argvals = (*(dict_get(locals, arg, NULL) for arg in tuple_iter(args)), *dict_get(locals, varargs, ()))
         if int_bool(tuple_len(argvals)) and (self := tuple_getitem(argvals, 0)) is not NULL:
             return self
         raise RuntimeError('unable to bind self')
