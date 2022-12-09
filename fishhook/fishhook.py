@@ -307,10 +307,10 @@ def unhook(cls, name):
                 current = func
                 break
     if not hasattr(current, '__code__'):
-        raise RuntimeError('not hooked')
+        raise RuntimeError(f'{cls.__name__}.{name} not hooked')
     orig_val = get_cache(current.__code__, 'orig')
-    if orig_val is NOT_FOUND:
-        raise RuntimeError('not hooked')
+    if orig_val is NOT_FOUND or name not in vars(cls):
+        raise RuntimeError(f'{cls.__name__}.{name} not hooked')
     if orig_val is not NULL:
         force_setattr(cls, name, orig_val)
     else:
