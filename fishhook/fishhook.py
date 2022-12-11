@@ -286,15 +286,15 @@ def hook(cls, name=None, func=None):
     def wrapper(func):
         nonlocal name
         if isinstance(func, (classmethod, staticmethod)):
-            code = func.__wrapped__.__code__
+            code = func.__func__.__code__
         else:
             code = func.__code__
         name = name or code.co_name
         orig_val = vars(cls).get(name, NULL)
         if isinstance(func, classmethod):
-            func = classmethod(add_cache(func.__wrapped__, orig=orig_val))
+            func = classmethod(add_cache(func.__func__, orig=orig_val))
         elif isinstance(func, staticmethod):
-            func = staticmethod(add_cache(func.__wrapped__, orig=orig_val))
+            func = staticmethod(add_cache(func.__func__, orig=orig_val))
         else:
             func = add_cache(func, orig=orig_val)
         force_setattr(cls, name, func)
@@ -310,7 +310,7 @@ def unhook(cls, name):
     '''
     current = vars(cls).get(name)
     if isinstance(current, (classmethod, staticmethod)):
-        current = current.__wrapped__
+        current = current.__func__
     if isinstance(current, property):
         for func in [current.fget, current.fset, current.fdel]:
             if hasattr(func, '__code__'):
