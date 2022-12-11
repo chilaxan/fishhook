@@ -399,6 +399,10 @@ class hook_property:
 
 hook.property = hook_property
 
+class classproperty(property):
+    def __get__(self, owner_self, owner_cls):
+        return self.fget(owner_cls)
+
 def hook_var(cls, name, value):
     '''
     Allows for easy hooking of static class variables
@@ -406,7 +410,7 @@ def hook_var(cls, name, value):
     def prop(_):
         return value
     prop = add_cache(prop, orig=vars(cls).get(name, NULL))
-    force_setattr(cls, name, classmethod(property(prop)))
+    force_setattr(cls, name, classproperty(prop)))
 
 hook.var = hook_var
 
