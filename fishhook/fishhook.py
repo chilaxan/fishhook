@@ -410,7 +410,7 @@ def hook_var(cls, name, value):
     def prop(_):
         return value
     prop = add_cache(prop, orig=vars(cls).get(name, NULL))
-    force_setattr(cls, name, classproperty(prop)))
+    force_setattr(cls, name, classproperty(prop))
 
 hook.var = hook_var
 
