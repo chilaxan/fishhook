@@ -399,6 +399,17 @@ class hook_property:
 
 hook.property = hook_property
 
+def hook_var(cls, name, value):
+    '''
+    Allows for easy hooking of static class variables
+    '''
+    def prop(_):
+        return value
+    prop = add_cache(prop, orig=vars(cls).get(name, NULL))
+    force_setattr(cls, name, classmethod(property(prop)))
+
+hook.var = hook_var
+
 def hook_cls(cls, ncls=None):
     '''
     Decorator, allows for the decoration of classes to hook static classes
@@ -423,21 +434,10 @@ def hook_cls(cls, ncls=None):
             elif isinstance(value, (type(lambda:0), classmethod, staticmethod)):
                 hook(cls, name=attr, func=value)
             else:
-                force_setattr(cls, attr, value)
+                hook_var(cls, attr, value)
         return ncls
     if ncls:
         return wrapper(ncls)
     return wrapper
 
 hook.cls = hook_cls
-
-def hook_var(cls, name, value):
-    '''
-    Allows for easy hooking of static class variables
-    '''
-    def prop(_):
-        return value
-    prop = add_cache(prop, orig=vars(cls).get(name, NULL))
-    force_setattr(cls, name, classmethod(property(prop)))
-
-hook.var = hook_var
