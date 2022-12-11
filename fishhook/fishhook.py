@@ -285,10 +285,19 @@ def hook(cls, name=None, func=None):
     '''
     def wrapper(func):
         nonlocal name
-        code = func.__code__
+        if isinstance(func, (classmethod, staticmethod)):
+            code = func.__wrapped__.__code__
+        else:
+            code = func.__code__
         name = name or code.co_name
         orig_val = vars(cls).get(name, NULL)
-        force_setattr(cls, name, add_cache(func, orig=orig_val))
+        if isinstance(func, classmethod):
+            func = classmethod(add_cache(func.__wrapped__, orig=orig_val))
+        elif isinstance(func, staticmethod):
+            func = staticmethod(add_cache(func.__wrapped__, orig=orig_val))
+        else:
+            func = add_cache(func, orig=orig_val)
+        force_setattr(cls, name, func)
         return func
     if func:
         return wrapper(func)
@@ -298,9 +307,10 @@ def unhook(cls, name):
     '''
     Removes new implementation on static dunder
     Restores the original implementation of a static dunder if it exists
-    Will also delete non-dunders
     '''
-    current = getattr(cls, name)
+    current = vars(cls).get(name)
+    if isinstance(current, (classmethod, staticmethod)):
+        current = current.__wrapped__
     if isinstance(current, property):
         for func in [current.fget, current.fset, current.fdel]:
             if hasattr(func, '__code__'):
@@ -410,7 +420,7 @@ def hook_cls(cls, ncls=None):
                 continue
             elif isinstance(value, property):
                 setattr(ncls, attr, hook_property(cls, name=attr, fget=value.fget, fset=value.fset, fdel=value.fdel))
-            elif isinstance(value, type(lambda:0)):
+            elif isinstance(value, (type(lambda:0), classmethod, staticmethod)):
                 hook(cls, name=attr, func=value)
             else:
                 force_setattr(cls, attr, value)
@@ -420,3 +430,14 @@ def hook_cls(cls, ncls=None):
     return wrapper
 
 hook.cls = hook_cls
+
+def hook_var(cls, name, value):
+    '''
+    Allows for easy hooking of static class variables
+    '''
+    def prop(_):
+        return value
+    prop = add_cache(prop, orig=vars(cls).get(name, NULL))
+    force_setattr(cls, name, classmethod(property(prop)))
+
+hook.var = hook_var
