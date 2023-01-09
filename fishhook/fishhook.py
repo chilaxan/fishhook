@@ -198,11 +198,13 @@ def build_orig():
     dict_get = dict.get
     flags = {v: k for k, v in dis.COMPILER_FLAG_NAMES.items()}.get
     new_slice = slice.__call__
+    get_class = vars(object)['__class__'].__get__
+    str_equals = str.__eq__
     def get_cache(code, key):
         consts = get_consts(code)
         for cache in tuple_iter(tuple_getitem(consts, new_slice(None, None, -1))):
-            if isinstance(cache, Cache):
-                if cache.key == key:
+            if cache is not None and get_class(cache) is Cache:
+                if str_equals(cache.key, key):
                     return cache.value
             else:
                 break # caches are injected at end of consts array
