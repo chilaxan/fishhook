@@ -276,12 +276,14 @@ del build_orig
 
 def reduce_classes(*cls):
     for c in cls:
-        if isinstance(c, types.UnionType):
-            yield from reduce_classes(*c.__args__)
-        elif isinstance(c, types.GenericAlias):
-            yield from reduce_classes(c.__origin__)
-        else:
-            yield c
+        if hasattr(types, 'UnionType'):
+            if isinstance(c, types.UnionType):
+                yield from reduce_classes(*c.__args__)
+                return
+            elif isinstance(c, types.GenericAlias):
+                yield from reduce_classes(c.__origin__)
+                return
+        yield c
 
 def hook(_cls, *more_classes,  name=None, func=None):
     '''
