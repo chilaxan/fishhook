@@ -10,6 +10,9 @@ functionality using the `unhook` function
 __all__ = ['orig', 'hook', 'unhook']
 
 from importlib.metadata import version
-__version__ = version('fishhook')
+try:
+    __version__ = version('fishhook')
+except:
+    __version__ = 'unknown'
 
 from .fishhook import *

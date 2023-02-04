@@ -1,5 +1,5 @@
 from ctypes import c_char, pythonapi, py_object
-import sys, dis
+import sys, dis, types
 
 BYTES_HEADER = bytes.__basicsize__ - 1
 
@@ -274,7 +274,16 @@ def build_orig():
 orig, add_cache, get_cache = build_orig()
 del build_orig
 
-def hook(cls, name=None, func=None):
+def reduce_classes(*cls):
+    for c in cls:
+        if isinstance(c, types.UnionType):
+            yield from reduce_classes(*c.__args__)
+        elif isinstance(c, types.GenericAlias):
+            yield from reduce_classes(c.__origin__)
+        else:
+            yield c
+
+def hook(_cls, *more_classes,  name=None, func=None):
     '''
     Decorator, allows for the decoration of functions to hook a specified dunder on a static class
     ex:
@@ -287,19 +296,20 @@ def hook(cls, name=None, func=None):
     '''
     def wrapper(func):
         nonlocal name
-        if isinstance(func, (classmethod, staticmethod)):
-            code = func.__func__.__code__
-        else:
-            code = func.__code__
-        name = name or code.co_name
-        orig_val = vars(cls).get(name, NULL)
-        if isinstance(func, classmethod):
-            func = classmethod(add_cache(func.__func__, orig=orig_val))
-        elif isinstance(func, staticmethod):
-            func = staticmethod(add_cache(func.__func__, orig=orig_val))
-        else:
-            func = add_cache(func, orig=orig_val)
-        force_setattr(cls, name, func)
+        for cls in reduce_classes(_cls, *more_classes):
+            if isinstance(func, (classmethod, staticmethod)):
+                code = func.__func__.__code__
+            else:
+                code = func.__code__
+            name = name or code.co_name
+            orig_val = vars(cls).get(name, NULL)
+            if isinstance(func, classmethod):
+                new_func = classmethod(add_cache(func.__func__, orig=orig_val))
+            elif isinstance(func, staticmethod):
+                new_func = staticmethod(add_cache(func.__func__, orig=orig_val))
+            else:
+                new_func = add_cache(func, orig=orig_val)
+            force_setattr(cls, name, new_func)
         return func
     if func:
         return wrapper(func)
