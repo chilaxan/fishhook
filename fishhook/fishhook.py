@@ -279,10 +279,10 @@ def reduce_classes(*cls):
         if hasattr(types, 'UnionType'):
             if isinstance(c, types.UnionType):
                 yield from reduce_classes(*c.__args__)
-                return
+                continue
             elif isinstance(c, types.GenericAlias):
                 yield from reduce_classes(c.__origin__)
-                return
+                continue
         yield c
 
 def hook(_cls, *more_classes,  name=None, func=None):
