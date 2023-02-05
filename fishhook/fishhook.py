@@ -53,7 +53,7 @@ def find_offset(mem, val):
     return [*mem].index(val)
 
 def assert_cls(o):
-    if isinstance(o, type):
+    if type(o).__flags__ & (1 << 31):
         return o
     else:
         raise RuntimeError('Invalid class or object')
@@ -276,14 +276,12 @@ del build_orig
 
 def reduce_classes(*cls):
     for c in cls:
-        if hasattr(types, 'UnionType'):
-            if isinstance(c, types.UnionType):
-                yield from reduce_classes(*c.__args__)
-                continue
-            elif isinstance(c, types.GenericAlias):
-                yield from reduce_classes(c.__origin__)
-                continue
-        yield c
+        if hasattr(types, 'UnionType') and isinstance(c, types.UnionType):
+            yield from reduce_classes(*c.__args__)
+        elif hasattr(types, 'GenericAlias') and isinstance(c, types.GenericAlias):
+            yield from reduce_classes(c.__origin__)
+        else:
+            yield c
 
 def hook(_cls, *more_classes,  name=None, func=None):
     '''
