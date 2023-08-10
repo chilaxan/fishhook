@@ -65,15 +65,20 @@ def build_unlock_lock():
         cls_mem = allocate_structs(assert_cls(cls))
         flags = cls.__flags__
         try:
-            return flags
+            return flags, cls_mem[tp_dict_offset] == 0
         finally:
             if sys.version_info[0:2] <= (3, 9):
                 cls_mem[flag_offset] |= Py_TPFLAGS_HEAPTYPE
             elif sys.version_info[0:2] >= (3, 10):
                 cls_mem[flag_offset] &= ~Py_TPFLAGS_IMMUTABLE
 
-    def lock(cls, flags=None):
+    def lock(cls, flags=None, should_have_null_tp_dict=False):
         cls_mem = getmem(assert_cls(cls))
+        if should_have_null_tp_dict:
+            materialized_dict_addr = cls_mem[tp_dict_offset]
+            if materialized_dict_addr:
+                cls_mem[tp_dict_offset] = 0
+                getmem(materialized_dict_addr, 8)[0] -= 1 # clear materialized dict
         if flags is None:
             if sys.version_info[0:2] <= (3, 9):
                 cls_mem[flag_offset] &= ~Py_TPFLAGS_HEAPTYPE
@@ -98,6 +103,14 @@ def newref(obj):
     getmem(obj)[0] += 1
     return obj
 
+class Template:pass
+template_mem = getmem(Template)
+tp_base_offset = find_offset(template_mem, id(Template.__base__))
+tp_basicsize_offset = find_offset(template_mem, Template.__basicsize__)
+tp_flags_offset = find_offset(template_mem, Template.__flags__)
+tp_dict_offset = find_offset(template_mem, id(getdict(Template)))
+tp_bases_offset = find_offset(template_mem, id(Template.__bases__))
+
 def patch_object():
     '''
     adds fake class to inheritance chain so that object can be modified
@@ -106,12 +119,6 @@ def patch_object():
     into all lookups by modifying type.__bases__?
     '''
 
-    int_mem = getmem(int)
-    tp_base_offset = find_offset(int_mem, id(int.__base__))
-    tp_basicsize_offset = find_offset(int_mem, int.__basicsize__)
-    tp_flags_offset = find_offset(int_mem, int.__flags__)
-    tp_dict_offset = find_offset(int_mem, id(getdict(int)))
-    tp_bases_offset = find_offset(int_mem, id(int.__bases__))
     fake_addr = alloc(sizeof(object))
     fake_mem = getmem(fake_addr, sizeof(object))
     fake_mem[0] = 1
@@ -141,19 +148,29 @@ patch_object()
 def force_setattr(cls, attr, value):
     flags = None
     try:
-        flags = unlock(cls)
+        flags, should_have_null_tp_dict = unlock(cls)
+        if should_have_null_tp_dict: # added for 3.12+ to ensure consistent state
+            getdict(cls)[attr] = value
         setattr(cls, attr, value)
     finally:
-        lock(cls, flags)
+        lock(cls, flags, should_have_null_tp_dict)
         pythonapi.PyType_Modified(py_object(cls))
 
 def force_delattr(cls, attr):
     flags = None
     try:
-        flags = unlock(cls)
-        delattr(cls, attr)
+        flags, should_have_null_tp_dict = unlock(cls)
+        if should_have_null_tp_dict: # added for 3.12+ to ensure consistent state
+            del getdict(cls)[attr]
+        try:
+            delattr(cls, attr)
+        except AttributeError:
+            # for some attributes that are not cached
+            # delattr does not have a consistent state
+            # luckily, seems like we can ignore it
+            pass
     finally:
-        lock(cls, flags)
+        lock(cls, flags, should_have_null_tp_dict)
         pythonapi.PyType_Modified(py_object(cls))
 
 NULL = object()
