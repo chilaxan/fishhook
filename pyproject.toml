@@ -1,0 +1,29 @@
+[project]
+name = "fishhook"
+version = "0.3.1"
+description = "Allows for runtime hooking of static class functions"
+authors = [
+    { name = "chilaxan", email = "chilaxan@gmail.com" },
+]
+license = { text = "MIT" }
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "capstone",
+    "keystone-engine",
+]
+
+[project.urls]
+repository = "https://github.com/chilaxan/fishhook"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["fishhook"]
