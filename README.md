@@ -37,6 +37,27 @@ def imag(self):
   ...
   return orig.imag
 ```
+
+# fishhook.asm
+
+This submodule allows for more in-depth C level hooks.
+For obvious reasons, this is vastly unstable, mostly provided as an experiment.
+Originally created as a way to grab a reference to the Interned strings dictionary.
+
+```py
+from fishhook import asm
+from ctypes import py_object, pythonapi
+
+@asm.hook(pythonapi.PyDict_SetDefault, restype=py_object, argtypes=[py_object, py_object, py_object])
+def setdefault(self, key, value):
+    if key == 'MAGICVAL':
+        return self
+    return pythonapi.PyDict_SetDefault(self, key, value)
+
+pythonapi.PyUnicode_InternFromString.restype = py_object
+interned = pythonapi.PyUnicode_InternFromString(b'MAGICVAL')
+```
+
 #### Links
 
 [Github](https://github.com/chilaxan/fishhook)

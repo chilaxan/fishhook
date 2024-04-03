@@ -5,3 +5,6 @@ build/
 fishhook/__pycache__
 fishhook.egg-info/
 push.sh
+**/.DS_Store
+.vscode/
+fishhook/_asm.*.so
