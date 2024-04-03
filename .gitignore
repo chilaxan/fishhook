@@ -8,3 +8,4 @@ push.sh
 **/.DS_Store
 .vscode/
 fishhook/_asm.*.so
+wheelhouse/

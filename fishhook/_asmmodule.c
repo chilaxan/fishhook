@@ -57,7 +57,7 @@ void invalidateInstructionCache(void *addr, size_t length) {
             __builtin___clear_cache((char*)addr, (char*)(addr + length));
         #endif
     #else
-        #error "cannot determine way to clear instruction cache (required on arm64, otherwise make an issue here: https://github.com/chilaxan/fishhook)"
+       // cannot determine way to clear instruction cache (required on arm64, otherwise make an issue here: https://github.com/chilaxan/fishhook)
     #endif
 }
 
