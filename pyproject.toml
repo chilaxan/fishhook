@@ -1,6 +1,6 @@
 [project]
 name = "fishhook"
-version = "0.3.1"
+version = "0.3.2"
 description = "Allows for runtime hooking of static class functions"
 authors = [
     { name = "chilaxan", email = "chilaxan@gmail.com" },
