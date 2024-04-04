@@ -1,13 +1,10 @@
 from ctypes import *
 import platform
+import weakref
 
 if platform.system() == 'Windows':
     raise RuntimeError('fishhook.asm does not currently work on Windows')
 
-import sys
-import weakref
-import capstone as CS
-import keystone as KS
 from ._asm import writeExecutableMemory
 from .fishhook import getmem
 from .jit import TRAMPOLINE
