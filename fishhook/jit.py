@@ -80,7 +80,7 @@ def size_to_typ(n):
         elif n == 8:
             return 'QWORD'
         else:
-            raise RuntimeError(f'x86 memory size {n} is unsupported')
+            raise RuntimeError(f'x86 register memory size {n} is unsupported')
 
 def inst(n, *args):
     return fragements[ARCH][n].format(*args)
@@ -94,8 +94,8 @@ def TRAMPOLINE(address, storage=None, registers=()):
             field = getattr(type(storage), register)
             offset = field.offset
             typ = size_to_typ(field.size)
-            header += inst('store_mem', register, TMP_REG, offset, *((typ,) if typ else ()))
-            footer += inst('read_mem', register, TMP_REG, offset, *((typ,) if typ else ()))
+            header += inst('store_mem', register, TMP_REG, offset, typ)
+            footer += inst('read_mem', register, TMP_REG, offset, typ)
     else:
         header = footer = ''
 

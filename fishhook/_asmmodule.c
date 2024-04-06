@@ -81,7 +81,7 @@ static PyObject *method_writeExecutableMemory(PyObject *self, PyObject *args, Py
     }
 
     if (target_buf.len != src_buf.len) {
-        PyErr_SetString(PyExc_ValueError, "target and dest must be the same length");
+        PyErr_SetString(PyExc_ValueError, "target and src must be the same length");
         return NULL;
     }
 
