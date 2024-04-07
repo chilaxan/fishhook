@@ -50,14 +50,16 @@ void changeProts(Py_buffer buffer, int prots) {
 }
 
 void invalidateInstructionCache(void *addr, size_t length) {
-    #if defined(__x86_64__) || defined(_M_X64)
-        // x86 invalidates cache for us
+    #if defined(_WIN32)
+        FlushInstructionCache(GetCurrentProcess(), memory, size);
     #elif defined(__has_builtin)
         #if __has_builtin(__builtin___clear_cache)
             __builtin___clear_cache((char*)addr, (char*)(addr + length));
         #endif
     #else
-       // cannot determine way to clear instruction cache (required on arm64, otherwise make an issue here: https://github.com/chilaxan/fishhook)
+       // cannot determine way to clear instruction cache
+       // things might work, and might not
+       // If you get weird crashes, make an issue: https://github.com/chilaxan/fishhook
     #endif
 }
 
