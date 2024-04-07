@@ -51,7 +51,7 @@ void changeProts(Py_buffer buffer, int prots) {
 
 void invalidateInstructionCache(void *addr, size_t length) {
     #if defined(_WIN32)
-        FlushInstructionCache(GetCurrentProcess(), memory, size);
+        FlushInstructionCache(GetCurrentProcess(), (unsigned char*)addr, length);
     #elif defined(__has_builtin)
         #if __has_builtin(__builtin___clear_cache)
             __builtin___clear_cache((char*)addr, (char*)(addr + length));
