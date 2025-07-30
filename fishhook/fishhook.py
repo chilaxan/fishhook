@@ -212,7 +212,7 @@ def build_orig():
     int_add = int.__add__
     int_and = int.__and__
     int_bool = int.__bool__
-    dict_get = dict.get
+    locals_get = type(get_locals(getframe())).get # this enables compat with >= 3.13 FrameLocalsProxy
     flags = {v: k for k, v in dis.COMPILER_FLAG_NAMES.items()}.get
     new_slice = slice.__call__
     get_class = vars(object)['__class__'].__get__
@@ -248,7 +248,7 @@ def build_orig():
         varargs = None
         if int_bool(int_and(get_flags(co), flags('VARARGS'))):
             varargs = tuple_getitem(names, nargs)
-        argvals = (*(dict_get(locals, arg, NULL) for arg in tuple_iter(args)), *dict_get(locals, varargs, ()))
+        argvals = (*(locals_get(locals, arg, NULL) for arg in tuple_iter(args)), *locals_get(locals, varargs, ()))
         if int_bool(tuple_len(argvals)) and (self := tuple_getitem(argvals, 0)) is not NULL:
             return self
         raise RuntimeError('unable to bind self')

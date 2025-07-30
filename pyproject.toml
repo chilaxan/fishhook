@@ -1,6 +1,6 @@
 [project]
 name = "fishhook"
-version = "0.3.2"
+version = "0.3.3"
 description = "Allows for runtime hooking of static class functions"
 authors = [
     { name = "chilaxan", email = "chilaxan@gmail.com" },
@@ -14,8 +14,8 @@ classifiers = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-    "capstone",
-    "keystone-engine",
+    "capstone; os_name != 'nt'",
+    "keystone-engine; os_name != 'nt'",
 ]
 
 [project.urls]
