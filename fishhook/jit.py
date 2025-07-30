@@ -5,7 +5,7 @@ import platform
 try:
     import capstone as CS
 except ModuleNotFoundError as err:
-    if err.name == 'distutils':
+    if 'distutils' in err.name:
         # capstone depends on distutils and pkg_resources, but in most configs does not need them
         # 3.12+ has deprecated these modules
         # we can stub them out and re-attempt the import
@@ -20,7 +20,23 @@ except ModuleNotFoundError as err:
         sys.modules['pkg_resources'] = stub()
         import capstone as CS
 
-import keystone as KS
+try:
+    import keystone as KS
+except ModuleNotFoundError as err:
+    if 'distutils' in err.name:
+        # keystone depends on distutils and pkg_resources, but in most configs does not need them
+        # 3.12+ has deprecated these modules
+        # we can stub them out and re-attempt the import
+        class stub:
+            def __getattr__(self, attr):
+                return self
+            def __call__(self, *args):
+                return ''
+
+        sys.modules['distutils'] = stub()
+        sys.modules['distutils.sysconfig'] = stub()
+        sys.modules['pkg_resources'] = stub()
+        import keystone as KS
 
 ENDIAN = 'LITTLE' if memoryview(b'\1\0').cast('h')[0]==1 else 'BIG'
 BIT_SIZE = sys.maxsize.bit_length() + 1
