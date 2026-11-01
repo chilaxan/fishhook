@@ -12,6 +12,9 @@ def sizeof(obj):
 
 TYPE_BASICSIZE = sizeof(type)
 
+# mapping historyically is always directly after object header
+MAPPING_PROXY_OFFSET = sizeof(object())
+
 def getmem(obj_or_addr, size=None, fmt='P'):
     if size is None:
         if isinstance(obj_or_addr, type):
@@ -91,13 +94,9 @@ def build_unlock_lock():
 
 unlock, lock = build_unlock_lock()
 
-def getdict(cls, E=type('',(),{'__eq__':lambda s,o:o})()):
-    '''
-    Obtains a writeable dictionary of a classes namespace
-    Note that any modifications to this dictionary should be followed by a
-    call to PyType_Modified(cls)
-    '''
-    return cls.__dict__ == E
+def getdict(cls):
+    mapping = cls.__dict__
+    return py_object.from_address(id(mapping) + MAPPING_PROXY_OFFSET).value
 
 def newref(obj):
     getmem(obj)[0] += 1
